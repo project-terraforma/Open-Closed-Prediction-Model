@@ -1,0 +1,27 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+env/
+venv/
+.venv/
+
+# Data Files (Recommended to exclude large files)
+# project_c_raw.csv
+# project_c_raw.json
+*.csv
+*.json
+# Keep small parquet sample if needed for demo, otherwise exclude:
+# *.parquet
+
+# Models
+*.pkl
+*.joblib
+*.h5
+*.pt
+*.onnx
+
+# IDEs and OS
+.DS_Store
+.vscode/
+.idea/
