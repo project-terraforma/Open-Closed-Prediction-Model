@@ -3,7 +3,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List
 from .models import SearchResult, PlaceDetail
 from .search import search_places, get_place_record, load_data_to_db
-from .predict import predict_status
 
 app = FastAPI(title="StillOpen API")
 
@@ -44,37 +43,13 @@ def get_place_details(place_id: str):
     record = get_place_record(place_id)
     if not record:
         raise HTTPException(status_code=404, detail="Place not found")
-    
-    metadata = record.get('metadata_json', {})
-    
-    # Run prediction to get status/confidence
-    prediction_result = predict_status(metadata)
-    
-    location_str = f"Lon: {record['lon']:.5f}, Lat: {record['lat']:.5f}" if record.get('lon') else "Unknown Location"
-    if 'city' in metadata and 'state' in metadata:
-        location_str = f"{metadata.get('city', '')}, {metadata.get('state', '')}".strip(", ")
-    
-    website = metadata.get('website')
-    opening_hours = metadata.get('opening_hours')
-    photo_url = metadata.get('photo_url')
-    category = record.get('category') or "place"
 
-    if not photo_url:
-        photo_url = f"https://loremflickr.com/400/300/{category.replace(' ', ',')}"
+    # get_place_record already runs predict_status and builds address via _extract_place_info.
+    # We only need to attach the explanation list for the detail view.
+    from .predict import predict_status
+    prediction = predict_status(record.get("metadata_json", {}))
 
     return {
-        "id": place_id,
-        "name": record.get('name', 'Unknown'),
-        "category": record.get('category'),
-        "source": record.get('source'),
-        "lat": record.get('lat'),
-        "lon": record.get('lon'),
-        "metadata_json": metadata,
-        "address": location_str,
-        "status": prediction_result['status'],
-        "confidence": prediction_result['confidence'],
-        "explanation": prediction_result['explanation'],
-        "website": website,
-        "opening_hours": opening_hours,
-        "photo_url": photo_url
+        **record,
+        "explanation": prediction.get("explanation", []),
     }

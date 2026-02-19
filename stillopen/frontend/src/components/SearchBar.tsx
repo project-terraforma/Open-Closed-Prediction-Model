@@ -6,18 +6,7 @@ import { useRouter } from "next/navigation";
 import { searchPlaces } from "../lib/api";
 import StatusBadge from "./StatusBadge";
 
-interface SearchResultType {
-    id: string;
-    name: string;
-    address: string;
-    category?: string;
-    lat?: number;
-    lon?: number;
-    source?: string;
-    metadata_json?: Record<string, unknown>;
-    status: string;
-    confidence: number;
-}
+import type { SearchResultType } from "./SearchResults";
 
 export default function SearchBar({ compact = false }: { compact?: boolean }) {
     const [query, setQuery] = useState("");

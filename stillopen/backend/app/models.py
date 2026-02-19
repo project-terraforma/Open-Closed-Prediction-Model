@@ -22,6 +22,7 @@ class SearchResult(BaseModel):
     status: str
     confidence: float
     website: Optional[str] = None
+    phone: Optional[str] = None
     opening_hours: Optional[str] = None
     photo_url: Optional[str] = None
 
@@ -38,6 +39,7 @@ class PlaceDetail(BaseModel):
     confidence: float
     explanation: List[str]
     website: Optional[str] = None
+    phone: Optional[str] = None
     opening_hours: Optional[str] = None
     photo_url: Optional[str] = None
 
