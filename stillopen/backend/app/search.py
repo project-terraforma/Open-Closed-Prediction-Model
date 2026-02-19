@@ -68,6 +68,14 @@ def search_places(query: str, limit: int = 20, offset: int = 0,
                 if 'city' in metadata and 'state' in metadata:
                     location_str = f"{metadata.get('city', '')}, {metadata.get('state', '')}".strip(', ')
 
+                website = metadata.get('website')
+                opening_hours = metadata.get('opening_hours')
+                photo_url = metadata.get('photo_url')
+                category = row.category or "place"
+                
+                if not photo_url:
+                    photo_url = f"https://loremflickr.com/400/300/{category.replace(' ', ',')}"
+
                 out.append({
                     "id": str(row.place_id),
                     "name": row.name,
@@ -78,7 +86,10 @@ def search_places(query: str, limit: int = 20, offset: int = 0,
                     "metadata_json": metadata,
                     "address": location_str,
                     "status": status,
-                    "confidence": confidence
+                    "confidence": confidence,
+                    "website": website,
+                    "opening_hours": opening_hours,
+                    "photo_url": photo_url
                 })
             
             return out

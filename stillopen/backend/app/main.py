@@ -54,6 +54,14 @@ def get_place_details(place_id: str):
     if 'city' in metadata and 'state' in metadata:
         location_str = f"{metadata.get('city', '')}, {metadata.get('state', '')}".strip(", ")
     
+    website = metadata.get('website')
+    opening_hours = metadata.get('opening_hours')
+    photo_url = metadata.get('photo_url')
+    category = record.get('category') or "place"
+
+    if not photo_url:
+        photo_url = f"https://loremflickr.com/400/300/{category.replace(' ', ',')}"
+
     return {
         "id": place_id,
         "name": record.get('name', 'Unknown'),
@@ -65,5 +73,8 @@ def get_place_details(place_id: str):
         "address": location_str,
         "status": prediction_result['status'],
         "confidence": prediction_result['confidence'],
-        "explanation": prediction_result['explanation']
+        "explanation": prediction_result['explanation'],
+        "website": website,
+        "opening_hours": opening_hours,
+        "photo_url": photo_url
     }

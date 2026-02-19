@@ -21,6 +21,9 @@ class SearchResult(BaseModel):
     metadata_json: Optional[dict] = None
     status: str
     confidence: float
+    website: Optional[str] = None
+    opening_hours: Optional[str] = None
+    photo_url: Optional[str] = None
 
 class PlaceDetail(BaseModel):
     id: str
@@ -34,6 +37,9 @@ class PlaceDetail(BaseModel):
     status: str
     confidence: float
     explanation: List[str]
+    website: Optional[str] = None
+    opening_hours: Optional[str] = None
+    photo_url: Optional[str] = None
 
 # --- SQLAlchemy Database Models ---
 class Place(Base):
