@@ -86,5 +86,10 @@ class ModelService:
 
 model_service = ModelService()
 
-def predict_place(place_data: dict):
+def predict_status(place) -> dict:
+    # If a SQLAlchemy Place object is passed, extract metadata_json. Otherwise, use it as a dict.
+    place_data = place.metadata_json if hasattr(place, 'metadata_json') else place
+    if not isinstance(place_data, dict):
+        place_data = {}
+        
     return model_service.predict(place_data)

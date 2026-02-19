@@ -6,6 +6,11 @@ interface PlaceDetail {
     id: string;
     name: string;
     address: string;
+    category?: string;
+    lat?: number;
+    lon?: number;
+    source?: string;
+    metadata_json?: Record<string, unknown>;
     status: string;
     confidence: number;
     explanation: string[];
@@ -52,6 +57,16 @@ export default function ResultCard({ data }: ResultProps) {
                 <div>
                     <h2 className="text-3xl sm:text-4xl font-black text-gray-900 tracking-tight">{data.name}</h2>
                     <p className="text-gray-500 font-medium text-lg mt-2">{data.address}</p>
+                    {(data.category || data.source) && (
+                        <div className="flex items-center justify-center space-x-3 mt-4">
+                            {data.category && (
+                                <span className="px-3 py-1 bg-gray-100 text-gray-600 rounded-full text-xs font-bold uppercase tracking-wider">{data.category}</span>
+                            )}
+                            {data.source && (
+                                <span className="px-3 py-1 bg-blue-50 text-blue-600 border border-blue-100 rounded-full text-xs font-bold uppercase tracking-wider">Source: {data.source}</span>
+                            )}
+                        </div>
+                    )}
                 </div>
                 <div className="py-4 flex flex-col items-center">
                     <span className={`text-6xl font-black tracking-tighter uppercase ${colorClass}`}>

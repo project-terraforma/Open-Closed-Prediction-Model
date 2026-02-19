@@ -9,6 +9,11 @@ interface SearchResultType {
     id: string;
     name: string;
     address: string;
+    category?: string;
+    lat?: number;
+    lon?: number;
+    source?: string;
+    metadata_json?: Record<string, unknown>;
     status: string;
     confidence: number;
 }
