@@ -57,7 +57,8 @@ osm2pgsql -d stillopen -c california-latest.osm.pbf
 ## 5. Normalized Schema Setup & Seeding
 Once the OSM data is inside Postgres (typically as `planet_osm_point` and `planet_osm_polygon`), you must map it to our structured `places` table.
 
-Run the following SQL migration script in `psql -d stillopen`:
+### 5.1 Initialize Schema
+Run the following SQL migration script in `psql -d stillopen` to create the table and indices:
 
 ```sql
 -- 1. Create the structured Place schema
@@ -78,29 +79,27 @@ CREATE INDEX idx_places_geom ON places USING GIST (geom);
 
 -- Create trigram index for fast fuzzy searching
 CREATE INDEX idx_places_name_trgm ON places USING GIN (name gin_trgm_ops);
-
--- 3. Example generic ingestion script to map OSM points into the application table:
-INSERT INTO places (place_id, name, category, geom, source, metadata_json)
-SELECT 
-    'osm_' || osm_id, 
-    name, 
-    amenity AS category, 
-    ST_Transform(way, 4326)::geography AS geom, 
-    'osm',
-    jsonb_build_object(
-        'website', tags->'website',
-        'opening_hours', tags->'opening_hours',
-        'amenity', amenity,
-        'has_website', (tags ? 'website')
-    )
-FROM planet_osm_point 
-WHERE name IS NOT NULL AND amenity IS NOT NULL;
 ```
 
-## 6. Restart Backend
-Now, replace your backend `requirements.txt` dependencies, apply the new file changes (`database.py`, `models.py`, `search.py`), and start the application:
+### 5.2 Run Automated Ingestion Pipeline
+We provide a Python-based pipeline that handles OSM, OpenAddresses, and custom CSV datasets with deduplication and metadata enrichment.
 
 ```bash
+# Install dependencies
 pip install -r requirements.txt
+
+# Run the full pipeline (OSM -> OpenAddresses -> Generic CSVs -> Enrichment)
+python scripts/pipeline.py
+
+# Or run specific stages
+python scripts/pipeline.py --sources osm
+```
+
+See [ingest-data workflow](../.agent/workflows/ingest-data.md) for detailed usage of the ingestion scripts.
+
+## 6. Restart Backend
+Apply the new file changes (`database.py`, `models.py`, `search.py`), and start the application:
+
+```bash
 uvicorn app.main:app --reload
 ```
