@@ -44,10 +44,12 @@ def get_place_details(place_id: str):
     if not record:
         raise HTTPException(status_code=404, detail="Place not found")
 
-    # get_place_record already runs predict_status and builds address via _extract_place_info.
+    # get_place_record already runs predict_status inside _extract_place_info.
     # We only need to attach the explanation list for the detail view.
     from .predict import predict_status
-    prediction = predict_status(record.get("metadata_json", {}))
+    meta = record.get("metadata_json", {})
+    raw = meta.get("raw", meta) if isinstance(meta, dict) else {}
+    prediction = predict_status(raw)
 
     return {
         **record,

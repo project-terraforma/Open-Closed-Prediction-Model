@@ -1,43 +1,7 @@
 from sqlalchemy import text
 from .database import engine
 from .predict import predict_status
-
-
-def _build_address(metadata: dict) -> str:
-    """
-    Compose a human-readable address from OSM addr:* fields stored in metadata_json.
-    Falls back to city/state, then lat/lon coords if nothing else is found.
-    """
-    parts = []
-
-    # Street-level: number + street
-    house = metadata.get("addr:housenumber", "")
-    street = metadata.get("addr:street", "")
-    if house and street:
-        parts.append(f"{house} {street}")
-    elif street:
-        parts.append(street)
-
-    # City / municipality
-    city = (
-        metadata.get("addr:city")
-        or metadata.get("addr:municipality")
-        or metadata.get("city")
-    )
-    if city:
-        parts.append(city)
-
-    # State / province
-    state = metadata.get("addr:state") or metadata.get("state")
-    if state:
-        parts.append(state)
-
-    # Postcode
-    postcode = metadata.get("addr:postcode") or metadata.get("postcode")
-    if postcode:
-        parts.append(str(postcode))
-
-    return ", ".join(parts) if parts else ""
+from utils.canonical_metadata import build_canonical_metadata
 
 
 def _extract_place_info(row, metadata: dict) -> dict:
@@ -45,36 +9,49 @@ def _extract_place_info(row, metadata: dict) -> dict:
     Returns a fully-populated dict from a DB row + metadata_json.
     All fields that are absent default to None – no placeholders generated.
     """
+    metadata = metadata if isinstance(metadata, dict) else {}
+    if "canonical" in metadata and "raw" in metadata:
+        canonical = metadata.get("canonical") or {}
+        raw = metadata.get("raw") or {}
+    else:
+        # Backward-compat: older rows may store a flat metadata dict
+        raw = metadata
+        canonical = build_canonical_metadata(raw, lat=getattr(row, "lat", None), lon=getattr(row, "lon", None))
+
     try:
-        pred = predict_status(metadata)
+        pred = predict_status(raw)
         status = pred.get("status", "unknown")
         confidence = pred.get("confidence", 0.0)
     except Exception:
         status = "unknown"
         confidence = 0.0
 
-    address = _build_address(metadata)
-    if not address and row.lat and row.lon:
-        address = f"{row.lat:.5f}°N, {row.lon:.5f}°E"
+    address = canonical.get("formatted_address") or ""
+    website = canonical.get("website")
+    phone = canonical.get("international_phone_number")
 
-    # Pull every useful contact/info field from metadata
-    website = metadata.get("website") or metadata.get("contact:website")
-    phone = (
-        metadata.get("phone")
-        or metadata.get("contact:phone")
-        or metadata.get("telephone")
-    )
-    opening_hours = metadata.get("opening_hours")
-    photo_url = metadata.get("photo_url") or None  # explicit None if absent
+    opening_hours = None
+    oh = canonical.get("opening_hours")
+    if isinstance(oh, dict):
+        wt = oh.get("weekday_text")
+        if isinstance(wt, list) and wt:
+            opening_hours = " | ".join(str(x) for x in wt if x is not None)
+
+    photo_url = None
+    photos = canonical.get("photos")
+    if isinstance(photos, list) and photos:
+        first = photos[0]
+        if isinstance(first, dict):
+            photo_url = first.get("photo_reference")
 
     return {
         "id": str(row.place_id),
-        "name": row.name,
+        "name": canonical.get("name") or row.name,
         "category": row.category,
         "source": row.source,
         "lat": row.lat,
         "lon": row.lon,
-        "metadata_json": metadata,
+        "metadata_json": raw,
         "address": address,
         "status": status,
         "confidence": confidence,
