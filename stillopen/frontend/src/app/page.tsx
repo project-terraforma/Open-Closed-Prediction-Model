@@ -29,6 +29,12 @@ export default function Home() {
                 <div className="w-full flex justify-center">
                     <SearchBar />
                 </div>
+
+                <div className="pt-8 flex gap-4 text-sm font-semibold tracking-wide">
+                    <a href="/cities" className="text-gray-500 hover:text-emerald-600 border border-gray-200 bg-white/50 backdrop-blur-sm px-6 py-2 rounded-full shadow-sm hover:shadow transition-all">
+                        🗺️ Try Cities Mode
+                    </a>
+                </div>
             </motion.div>
 
             <footer className="absolute bottom-8 w-full text-center text-gray-400 text-xs font-semibold tracking-widest uppercase z-10 opacity-50 space-x-4">

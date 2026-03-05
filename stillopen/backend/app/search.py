@@ -75,7 +75,8 @@ def search_places(
     min_lon: float = None,
     max_lon: float = None,
 ):
-    if not query or len(query.strip()) < 2:
+    has_bbox = all(v is not None for v in [min_lat, max_lat, min_lon, max_lon])
+    if not has_bbox and (not query or len(query.strip()) < 2):
         return []
 
     with engine.connect() as conn:
@@ -99,25 +100,44 @@ def search_places(
                     }
                 )
 
-            sql = text(
-                f"""
-                SELECT
-                    place_id,
-                    name,
-                    category,
-                    source,
-                    ST_X(geom::geometry) AS lon,
-                    ST_Y(geom::geometry) AS lat,
-                    metadata_json,
-                    similarity(name, :query_str) AS name_sim
-                FROM places
-                WHERE
-                    (name ILIKE :ilike_query OR similarity(name, :query_str) > 0.15)
-                    {bbox_sql}
-                ORDER BY name_sim DESC
-                LIMIT :limit OFFSET :offset;
-                """
-            )
+            if query and len(query.strip()) >= 2:
+                sql = text(
+                    f"""
+                    SELECT
+                        place_id,
+                        name,
+                        category,
+                        source,
+                        ST_X(geom::geometry) AS lon,
+                        ST_Y(geom::geometry) AS lat,
+                        metadata_json,
+                        similarity(name, :query_str) AS name_sim
+                    FROM places
+                    WHERE
+                        (name ILIKE :ilike_query OR similarity(name, :query_str) > 0.15)
+                        {bbox_sql}
+                    ORDER BY name_sim DESC
+                    LIMIT :limit OFFSET :offset;
+                    """
+                )
+            else:
+                sql = text(
+                    f"""
+                    SELECT
+                        place_id,
+                        name,
+                        category,
+                        source,
+                        ST_X(geom::geometry) AS lon,
+                        ST_Y(geom::geometry) AS lat,
+                        metadata_json,
+                        1.0 AS name_sim
+                    FROM places
+                    WHERE 1=1 {bbox_sql}
+                    ORDER BY id DESC
+                    LIMIT :limit OFFSET :offset;
+                    """
+                )
 
             results = conn.execute(sql, params).fetchall()
             return [_extract_place_info(row, row.metadata_json or {}) for row in results]

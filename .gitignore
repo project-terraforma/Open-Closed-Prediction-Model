@@ -37,3 +37,4 @@ node_modules/
 out/
 build/
 .npm
+.log

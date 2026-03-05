@@ -29,11 +29,9 @@ def health():
     return {"status": "ok"}
 
 @app.get("/search", response_model=List[SearchResult])
-def search(q: str, limit: int = 20, offset: int = 0,
+def search(q: str = "", limit: int = 20, offset: int = 0,
            min_lat: float = None, max_lat: float = None,
            min_lon: float = None, max_lon: float = None):
-    if not q:
-        return []
     return search_places(query=q, limit=limit, offset=offset,
                          min_lat=min_lat, max_lat=max_lat,
                          min_lon=min_lon, max_lon=max_lon)
