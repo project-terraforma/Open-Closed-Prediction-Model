@@ -68,9 +68,9 @@ export default function ResultsMap({ results }: ResultsMapProps) {
                                 />
                             )}
 
-                            <div className="p-3 space-y-2">
+                            <div className="p-3 space-y-2 min-h-[120px]">
                                 <div className="flex items-start justify-between gap-2">
-                                    <h3 className="font-bold text-gray-900 leading-tight">{res.name}</h3>
+                                    <h3 className="font-bold text-gray-900 leading-tight">{res.name || "Unknown Place"}</h3>
                                     <StatusBadge status={res.status} />
                                 </div>
 
@@ -80,12 +80,16 @@ export default function ResultsMap({ results }: ResultsMapProps) {
                                     </span>
                                 )}
 
-                                {res.address && (
-                                    <p className="flex items-start gap-1.5 text-gray-600">
-                                        <MapPin className="w-3.5 h-3.5 mt-0.5 shrink-0 text-gray-400" />
+                                <p className="flex items-start gap-1.5 text-gray-600">
+                                    <MapPin className="w-3.5 h-3.5 mt-0.5 shrink-0 text-gray-400" />
+                                    {res.address ? (
                                         <span className="text-xs leading-snug">{res.address}</span>
-                                    </p>
-                                )}
+                                    ) : (
+                                        <span className="text-xs text-gray-400 italic">
+                                            {res.lat && res.lon ? `Coords: ${res.lat.toFixed(5)}, ${res.lon.toFixed(5)}` : "No address provided"}
+                                        </span>
+                                    )}
+                                </p>
 
                                 {res.opening_hours && (
                                     <p className="flex items-center gap-1.5 text-gray-600">

@@ -68,34 +68,36 @@ export default function SearchResults({ query }: { query: string }) {
 
     if (results.length === 0) return null;
 
+    console.log("Search results mapped in render:", results);
+
     return (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 w-full max-w-7xl mx-auto h-[78vh]">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 w-full max-w-7xl mx-auto h-[78vh] relative">
             {/* Scrollable result cards */}
             <div className="flex flex-col gap-4 overflow-y-auto pr-1 pb-12">
                 {results.map((res) => (
                     <Link
                         href={`/place/${res.id}`}
                         key={res.id}
-                        className="block w-full bg-white rounded-2xl shadow-sm border border-gray-100 hover:shadow-lg hover:border-emerald-200 transition-all group overflow-hidden"
+                        className="block flex-shrink-0 w-full bg-white rounded-2xl shadow-sm border border-gray-100 hover:shadow-lg hover:border-emerald-200 transition-all group overflow-hidden"
                     >
                         <div className="flex gap-0">
                             {/* Photo thumbnail — only if real URL */}
                             {res.photo_url && (
-                                <div className="w-28 sm:w-36 flex-shrink-0 relative self-stretch">
+                                <div className="w-28 sm:w-36 flex-shrink-0 relative self-stretch min-h-[140px] bg-gray-100">
                                     {/* eslint-disable-next-line @next/next/no-img-element */}
                                     <img
                                         src={res.photo_url}
-                                        alt={res.name}
+                                        alt={res.name || "Unknown Place"}
                                         className="absolute inset-0 w-full h-full object-cover"
                                     />
                                 </div>
                             )}
 
-                            <div className="flex flex-col flex-1 min-w-0 p-5">
+                            <div className="flex flex-col flex-1 min-w-0 p-5 min-h-[140px]">
                                 {/* Name + status */}
                                 <div className="flex justify-between items-start gap-2">
                                     <h2 className="text-lg font-bold text-gray-900 group-hover:text-emerald-600 transition-colors leading-tight">
-                                        {res.name}
+                                        {res.name || "Unknown Place"}
                                     </h2>
                                     <div className="flex-shrink-0">
                                         <StatusBadge status={res.status} />
@@ -110,13 +112,20 @@ export default function SearchResults({ query }: { query: string }) {
                                 )}
 
                                 {/* Details block */}
-                                <div className="mt-3 space-y-1.5 text-sm text-gray-500">
-                                    {res.address && (
-                                        <p className="flex items-start gap-1.5">
-                                            <MapPin className="w-4 h-4 mt-0.5 shrink-0 text-gray-400" />
+                                <div className="mt-3 space-y-1.5 text-sm text-gray-500 flex-1">
+                                    <p className="flex items-start gap-1.5 text-xs font-semibold text-gray-400 uppercase tracking-widest">
+                                        Source: {res.source || "Unknown"}
+                                    </p>
+                                    <p className="flex items-start gap-1.5">
+                                        <MapPin className="w-4 h-4 mt-0.5 shrink-0 text-gray-400" />
+                                        {res.address ? (
                                             <span className="line-clamp-2">{res.address}</span>
-                                        </p>
-                                    )}
+                                        ) : (
+                                            <span className="text-gray-400 italic">
+                                                {res.lat && res.lon ? `Coords: ${res.lat.toFixed(5)}, ${res.lon.toFixed(5)}` : "No address provided"}
+                                            </span>
+                                        )}
+                                    </p>
                                     {res.opening_hours && (
                                         <p className="flex items-center gap-1.5">
                                             <Clock className="w-4 h-4 shrink-0 text-gray-400" />
@@ -151,7 +160,7 @@ export default function SearchResults({ query }: { query: string }) {
                                 {/* Confidence footer */}
                                 {(res.status === "open" || res.status === "closed") && (
                                     <p className="mt-3 text-[10px] font-bold uppercase tracking-widest text-gray-400">
-                                        Conf: {(res.confidence * 100).toFixed(0)}%
+                                        Conf: {((res.confidence ?? 0) * 100).toFixed(0)}%
                                     </p>
                                 )}
                             </div>

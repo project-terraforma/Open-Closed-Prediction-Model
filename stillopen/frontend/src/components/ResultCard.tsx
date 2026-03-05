@@ -58,7 +58,7 @@ export default function ResultCard({ data }: ResultProps) {
                 </div>
             )}
 
-            <div className="p-8 sm:p-12 flex flex-col gap-8">
+            <div className="p-8 sm:p-12 flex flex-col gap-8 min-h-[400px]">
                 {/* Status + Name */}
                 <div className="flex flex-col items-center text-center gap-4">
                     <motion.div
@@ -71,7 +71,9 @@ export default function ResultCard({ data }: ResultProps) {
                     </motion.div>
 
                     <div>
-                        <h2 className="text-3xl sm:text-4xl font-black text-gray-900 tracking-tight">{data.name}</h2>
+                        <h2 className="text-3xl sm:text-4xl font-black text-gray-900 tracking-tight">
+                            {data.name || "Unknown Place"}
+                        </h2>
 
                         {/* Category + Source badges */}
                         {(data.category || data.source) && (
@@ -95,7 +97,7 @@ export default function ResultCard({ data }: ResultProps) {
                         </div>
                         {(isOpen || isClosed) && (
                             <p className="text-gray-400 text-sm font-semibold uppercase tracking-widest mt-2">
-                                Confidence: {(data.confidence * 100).toFixed(0)}%
+                                Confidence: {((data.confidence ?? 0) * 100).toFixed(0)}%
                             </p>
                         )}
                     </div>
@@ -103,12 +105,16 @@ export default function ResultCard({ data }: ResultProps) {
 
                 {/* Contact / location info */}
                 <div className="bg-gray-50 rounded-xl border border-gray-100 divide-y divide-gray-100">
-                    {data.address && (
-                        <div className="flex items-start gap-3 p-4">
-                            <MapPin className="w-4 h-4 mt-0.5 shrink-0 text-gray-400" />
+                    <div className="flex items-start gap-3 p-4">
+                        <MapPin className="w-4 h-4 mt-0.5 shrink-0 text-gray-400" />
+                        {data.address ? (
                             <span className="text-gray-700 text-sm">{data.address}</span>
-                        </div>
-                    )}
+                        ) : (
+                            <span className="text-gray-400 italic text-sm">
+                                {data.lat && data.lon ? `Coordinates: ${data.lat.toFixed(5)}, ${data.lon.toFixed(5)}` : "No address provided"}
+                            </span>
+                        )}
+                    </div>
                     {data.opening_hours && (
                         <div className="flex items-start gap-3 p-4">
                             <Clock className="w-4 h-4 mt-0.5 shrink-0 text-gray-400" />
