@@ -1,12 +1,17 @@
 """
-Seed PostgreSQL with labeled OSM data (including closed places).
+Seed PostgreSQL with OSM training data (including closed places).
 
-Run this after the DB is provisioned to add closed-business ground truth.
+Loads osm_places.json (download_osm.py output) which contains closed/open
+ground-truth labels used for the original training dataset.
+
+For bulk California ingestion use:
+  python scripts/fetch_osm_california.py --local     ← all CA OSM businesses
+  python scripts/fetch_wikidata_ca.py --local        ← Wikidata CA businesses
+
 Safe to re-run — uses ON CONFLICT DO NOTHING.
 
 Usage:
-    python scripts/seed_postgres.py
-    python scripts/seed_postgres.py --db postgresql+psycopg2://user:pass@host/db
+    python scripts/seed_postgres.py [--local] [--db DSN]
 """
 
 import argparse
@@ -112,9 +117,14 @@ def seed_osm(cur, osm_path, existing_ids):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--db", default=None, help="PostgreSQL DSN (overrides DATABASE_URL)")
+    parser.add_argument("--local", action="store_true",
+                        help="Use local Postgres (postgres:postgres123@localhost:5432/stillopen)")
     args = parser.parse_args()
 
-    db_url = get_db_url(args.db)
+    if args.local and not args.db:
+        db_url = "postgresql://postgres:postgres123@localhost:5432/stillopen"
+    else:
+        db_url = get_db_url(args.db)
     conn = psycopg2.connect(db_url)
     cur = conn.cursor()
 
