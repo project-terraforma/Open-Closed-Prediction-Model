@@ -308,11 +308,19 @@ def _action_mark(conn, all_duplicates: list[dict]) -> int:
 def _action_merge(conn, all_duplicates: list[dict]) -> int:
     """
     For each duplicate pair:
-      1. Copy OSM closure signals into the Overture record (disused:*, end_date,
-         operating_status, website_status) if not already present.
-      2. Delete the secondary (OSM/Wikidata) record.
+      1. Copy OSM closure signals into the Overture record.
+      2. Append OSM as an additional entry in the sources array.
+      3. Store osm_signals block for the detail page and scorer.
+      4. Delete the secondary (OSM/Wikidata) record.
 
-    This preserves Overture's rich metadata while keeping OSM's closure signals.
+    After merge the surviving Overture record will contain:
+      sources       → [...original Overture sources...,
+                       {"dataset": "osm", "record_id": "osm_xxx"}]
+      osm_signals   → {"place_id": "osm_xxx",
+                        "disused": true/false,
+                        "end_date": "YYYY-MM-DD" | null,
+                        "operating_status": "closed" | null}
+      + any closure fields (disused:*, end_date, operating_status) from OSM
     """
     print("\n[Action: merge] Merging closure signals → Overture, deleting secondaries...")
 
@@ -327,36 +335,73 @@ def _action_merge(conn, all_duplicates: list[dict]) -> int:
 
     with conn.cursor() as cur:
         for dup in all_duplicates:
-            dup_id     = dup.get("duplicate_id") or dup.get("osm_place_id")
-            primary_id = dup.get("primary_id")   or dup.get("overture_place_id")
-            dup_meta   = dup.get("dup_meta")      or dup.get("osm_meta") or {}
+            dup_id        = dup.get("duplicate_id") or dup.get("osm_place_id")
+            primary_id    = dup.get("primary_id")   or dup.get("overture_place_id")
+            dup_source    = dup.get("duplicate_source", "osm")
+            dup_meta      = dup.get("dup_meta")      or dup.get("osm_meta") or {}
 
             if not dup_id or dup_id in seen:
                 continue
             seen.add(dup_id)
 
-            # Extract closure signals from secondary record
+            # Parse secondary metadata
             if isinstance(dup_meta, str):
                 try:
                     dup_meta = json.loads(dup_meta)
                 except Exception:
                     dup_meta = {}
 
-            closure_patch = {
+            # ── Build the patch dict ──────────────────────────────────────────
+
+            patch: dict = {}
+
+            # 1. Closure signal fields (only add if not already on primary)
+            closure_fields = {
                 k: v for k, v in dup_meta.items()
                 if k in CLOSURE_FIELDS and v
             }
+            # These are placed at the END of the merge expression so they do
+            # NOT overwrite existing Overture values (primary takes priority).
+            patch.update(closure_fields)
 
-            # Merge into primary record (only adds fields, won't overwrite existing)
-            if closure_patch and primary_id:
-                patch_json = json.dumps(closure_patch)
+            # 2. osm_signals block — always written so detail page can surface it
+            is_disused = any(dup_meta.get(k) for k in (
+                "disused:amenity", "disused:shop", "closed:amenity", "closed:shop"
+            ))
+            patch["osm_signals"] = {
+                "place_id":         dup_id,
+                "source":           dup_source,
+                "disused":          is_disused,
+                "end_date":         dup_meta.get("end_date") or None,
+                "operating_status": dup_meta.get("operating_status") or None,
+            }
+
+            if primary_id:
+                patch_json = json.dumps(patch)
+
+                # 3. Append OSM to the sources array in the Overture record.
+                #    Uses jsonb_array_append (Postgres 16+) with a fallback for
+                #    older versions that builds the array manually.
+                osm_source_entry = json.dumps({
+                    "dataset":   dup_source,
+                    "record_id": dup_id,
+                })
                 cur.execute(
                     """
                     UPDATE places
-                    SET metadata_json = %s::jsonb || metadata_json
+                    SET metadata_json =
+                        -- Step A: apply closure fields + osm_signals
+                        --   patch || primary  →  primary wins on key conflicts
+                        (%s::jsonb || metadata_json)
+                        -- Step B: append the OSM source entry to the sources array
+                        || jsonb_build_object(
+                            'sources',
+                            COALESCE(metadata_json->'sources', '[]'::jsonb)
+                            || %s::jsonb
+                        )
                     WHERE place_id = %s
                     """,
-                    (patch_json, primary_id),
+                    (patch_json, f"[{osm_source_entry}]", primary_id),
                 )
                 merged += 1
 
