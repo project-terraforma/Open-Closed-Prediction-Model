@@ -263,7 +263,16 @@ def search(
     min_lon: float = None,
     max_lon: float = None,
     parent_category: str = None,
+    status: str = None,
 ):
+    """
+    Search places.
+
+    ?status=open    → only predicted-open records (uses pre-computed predicted_status column)
+    ?status=closed  → only predicted-closed records
+    ?status=unknown → only records without a pre-computed prediction
+    Omitting ?status returns all records (existing behaviour).
+    """
     limit = max(1, min(limit, 1000))
 
     # ?page=N takes priority over raw offset
@@ -273,9 +282,14 @@ def search(
     else:
         actual_page = max(1, (offset // limit) + 1) if limit > 0 else 1
 
+    # Normalise status filter
+    status_filter = status.lower().strip() if status else None
+    if status_filter not in (None, "open", "closed", "unknown"):
+        status_filter = None
+
     print(
         f"DEBUG: Search q='{q}' city='{city}' parent_category='{parent_category}' "
-        f"limit={limit} page={actual_page} offset={offset} "
+        f"status='{status_filter}' limit={limit} page={actual_page} offset={offset} "
         f"bbox=[{min_lat},{max_lat},{min_lon},{max_lon}]"
     )
     return search_places(
@@ -289,6 +303,7 @@ def search(
         min_lon=min_lon,
         max_lon=max_lon,
         parent_category=parent_category,
+        status_filter=status_filter,
     )
 
 @app.get("/place/{place_id}", response_model=PlaceDetail)
@@ -300,7 +315,14 @@ def get_place_details(place_id: str):
     from .predict import predict_status
     meta = record.get("metadata_json", {}) or {}
     raw = meta.get("raw", meta) if isinstance(meta, dict) else {}
-    prediction = predict_status(raw)
+    # Merge top-level record fields so the scorer can check name/category/address
+    place_input = {
+        "name": record.get("name", ""),
+        "category": record.get("category", ""),
+        "address": record.get("address", ""),
+        **raw,
+    }
+    prediction = predict_status(place_input)
 
     # --- Step 1: OSM Overpass enrichment ---
     lat, lon = record.get("lat"), record.get("lon")
