@@ -5,6 +5,7 @@ export interface SearchResultType {
     name: string;
     address: string;
     category?: string;
+    parent_category?: string;   // mapped parent group (e.g. "Food & Drink")
     city?: string;
     state?: string;
     lat?: number;
@@ -33,6 +34,12 @@ export interface SearchResponse {
     offset: number;
     has_next: boolean;
     has_prev: boolean;
+    category_counts?: Record<string, number>;  // parent_category → total count
+}
+
+export interface CategoryTreeResponse {
+    tree: Record<string, string[]>;
+    counts: Record<string, number>;   // parent_category → total DB count
 }
 
 export async function searchPlaces(
@@ -42,6 +49,7 @@ export async function searchPlaces(
     offset: number = 0,
     city?: string,
     page?: number,
+    parent_category?: string,
 ): Promise<SearchResponse> {
     let url = `${API_BASE}/search?q=${encodeURIComponent(query)}&limit=${limit}&offset=${offset}`;
     if (page !== undefined) url += `&page=${page}`;
@@ -50,6 +58,9 @@ export async function searchPlaces(
     }
     if (city) {
         url += `&city=${encodeURIComponent(city)}`;
+    }
+    if (parent_category) {
+        url += `&parent_category=${encodeURIComponent(parent_category)}`;
     }
     const res = await fetch(url);
     if (!res.ok) throw new Error("Failed to search places");
@@ -62,5 +73,11 @@ export async function getPlaceDetails(id: string) {
         if (res.status === 404) return null;
         throw new Error("Failed to get place details");
     }
+    return res.json();
+}
+
+export async function getCategoryTree(): Promise<CategoryTreeResponse> {
+    const res = await fetch(`${API_BASE}/categories`);
+    if (!res.ok) throw new Error("Failed to fetch categories");
     return res.json();
 }

@@ -3,7 +3,8 @@
 import { usePathname } from 'next/navigation';
 import Logo from './Logo';
 import SearchBar from './SearchBar';
-import { Moon, Sun, MapPin, Search } from 'lucide-react';
+import Link from 'next/link';
+import { Moon, Sun, MapPin, LayoutGrid } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
 import { useAppContext } from '../lib/AppContext';
 import Breadcrumbs from './Breadcrumbs';
@@ -85,6 +86,17 @@ export default function Navbar() {
                     )}
 
                     <div className="flex items-center gap-1 ml-auto">
+                        <Link
+                            href="/browse"
+                            className={`hidden sm:inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold transition-all ${
+                                pathname === '/browse'
+                                    ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20'
+                                    : 'text-gray-500 dark:text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20'
+                            }`}
+                        >
+                            <LayoutGrid className="w-4 h-4" /> Browse
+                        </Link>
+                        <div className="hidden sm:block w-px h-6 bg-gray-200 dark:bg-gray-800 mx-1" />
                         <button
                             onClick={handleLocationSwitch}
                             disabled={isLocating}

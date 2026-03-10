@@ -13,6 +13,7 @@ class SearchResult(BaseModel):
     name: str
     address: str
     category: Optional[str] = None
+    parent_category: Optional[str] = None    # mapped parent group from CATEGORY_TREE
     city: Optional[str] = None
     state: Optional[str] = None
     lat: Optional[float] = None
@@ -38,6 +39,7 @@ class SearchResponse(BaseModel):
     offset: int
     has_next: bool
     has_prev: bool
+    category_counts: Optional[dict] = None   # parent_category → total count for sidebar
 
 class PlaceDetail(BaseModel):
     id: str

@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List
 import json
+import time
 import requests
 from datetime import datetime, timezone
 from sqlalchemy import text
@@ -9,6 +10,7 @@ from sqlalchemy import text
 from .models import SearchResult, SearchResponse, PlaceDetail
 from .search import search_places, get_place_record, load_data_to_db, ensure_indexes
 from .database import engine, Base, IS_POSTGRES
+from .categories import CATEGORY_TREE
 
 # ---------------------------------------------------------------------------
 # OSM Overpass enrichment helpers
@@ -205,6 +207,50 @@ def geocode_city_endpoint(city: str):
 def health():
     return {"status": "ok"}
 
+
+# Category tree cache (5-minute TTL)
+_category_cache: dict = {}
+_category_cache_ts: float = 0.0
+_CATEGORY_CACHE_TTL = 300.0  # 5 minutes
+
+
+@app.get("/categories")
+def get_categories():
+    """
+    Return the full CATEGORY_TREE as JSON.
+    Optionally includes per-parent place counts when the DB is reachable.
+    Response is cached for 5 minutes.
+    """
+    global _category_cache, _category_cache_ts
+    now = time.monotonic() if hasattr(time, "monotonic") else __import__("time").monotonic()
+    if _category_cache and (now - _category_cache_ts) < _CATEGORY_CACHE_TTL:
+        return _category_cache
+
+    # Fetch raw category counts from DB
+    counts: dict[str, int] = {}
+    if IS_POSTGRES:
+        try:
+            with engine.connect() as conn:
+                rows = conn.execute(
+                    text("SELECT category, COUNT(*) AS n FROM places GROUP BY category")
+                ).fetchall()
+            from .categories import get_parent_category
+            from collections import defaultdict
+            parent_counts: dict[str, int] = defaultdict(int)
+            for row in rows:
+                parent_counts[get_parent_category(row.category or "")] += row.n
+            counts = dict(parent_counts)
+        except Exception as e:
+            print(f"Category count query failed: {e}")
+
+    result = {
+        "tree": CATEGORY_TREE,
+        "counts": counts,
+    }
+    _category_cache = result
+    _category_cache_ts = now
+    return result
+
 @app.get("/search", response_model=SearchResponse)
 def search(
     q: str = "",
@@ -216,6 +262,7 @@ def search(
     max_lat: float = None,
     min_lon: float = None,
     max_lon: float = None,
+    parent_category: str = None,
 ):
     limit = max(1, min(limit, 1000))
 
@@ -227,8 +274,9 @@ def search(
         actual_page = max(1, (offset // limit) + 1) if limit > 0 else 1
 
     print(
-        f"DEBUG: Search q='{q}' city='{city}' limit={limit} page={actual_page} "
-        f"offset={offset} bbox=[{min_lat},{max_lat},{min_lon},{max_lon}]"
+        f"DEBUG: Search q='{q}' city='{city}' parent_category='{parent_category}' "
+        f"limit={limit} page={actual_page} offset={offset} "
+        f"bbox=[{min_lat},{max_lat},{min_lon},{max_lon}]"
     )
     return search_places(
         query=q,
@@ -240,6 +288,7 @@ def search(
         max_lat=max_lat,
         min_lon=min_lon,
         max_lon=max_lon,
+        parent_category=parent_category,
     )
 
 @app.get("/place/{place_id}", response_model=PlaceDetail)

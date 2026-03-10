@@ -111,7 +111,7 @@ export default function SearchBar({ compact = false }: { compact?: boolean }) {
             setLoading(true);
             try {
                 const data = await searchPlaces(searchQuery);
-                const fudged = (data as SearchResultType[]).map(r => ({
+                const fudged = data.results.map(r => ({
                     ...r,
                     confidence: fudgeConfidence(r.id)
                 }));
@@ -296,7 +296,7 @@ export default function SearchBar({ compact = false }: { compact?: boolean }) {
                                                         <StatusBadge status={result.status} />
                                                         {(result.status === 'open' || result.status === 'closed') && (
                                                             <span className="text-[10px] text-gray-400 dark:text-gray-500 mt-1 uppercase tracking-wider font-semibold">
-                                                                Conf: {(result.confidence * 100).toFixed(0)}%
+                                                                Conf: {((result.confidence ?? 0) * 100).toFixed(0)}%
                                                             </span>
                                                         )}
                                                     </div>

@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, useMemo, useRef } from "react";
+import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { geocodeCity } from "../lib/CitySearchService";
 import { formatTag } from "../lib/formatters";
@@ -9,8 +9,9 @@ import StatusBadge from "./StatusBadge";
 import PaginationBar from "./PaginationBar";
 import Link from "next/link";
 import {
-    AlertCircle, MapPin, Tag,
-    CheckCircle, XCircle, List, Map as MapIcon,
+    AlertCircle, MapPin, Tag, CheckCircle, XCircle,
+    List, Map as MapIcon, SlidersHorizontal, X, ChevronDown,
+    ChevronRight,
 } from "lucide-react";
 import dynamic from "next/dynamic";
 
@@ -28,16 +29,124 @@ function toTitleCase(str: string): string {
 }
 
 type SortKey = "confidence" | "name" | "status";
+type StatusFilter = "all" | "open" | "closed" | "unknown";
 
-const PAGE_SIZES = [25, 50, 100, 250, 500, 1000];
+const PAGE_SIZES = [25, 50, 100, 250];
 const DEFAULT_LIMIT = 50;
+
+// Category icons (emoji) for browse cards and badges
+const CATEGORY_ICONS: Record<string, string> = {
+    "Food & Drink": "🍽️",
+    "Shopping": "🛍️",
+    "Health & Wellness": "💊",
+    "Services": "🔧",
+    "Automotive": "🚗",
+    "Entertainment": "🎭",
+    "Arts & Culture": "🎨",
+    "Education": "📚",
+    "Travel & Lodging": "🏨",
+    "Outdoors & Recreation": "🌿",
+    "Community": "🏛️",
+    "Other": "📍",
+};
+
+// Colors for parent category badges
+const CATEGORY_COLORS: Record<string, string> = {
+    "Food & Drink": "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400",
+    "Shopping": "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400",
+    "Health & Wellness": "bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400",
+    "Services": "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
+    "Automotive": "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
+    "Entertainment": "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400",
+    "Arts & Culture": "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400",
+    "Education": "bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400",
+    "Travel & Lodging": "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400",
+    "Outdoors & Recreation": "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400",
+    "Community": "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
+    "Other": "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400",
+};
+
+function SkeletonCard() {
+    return (
+        <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 p-4 animate-pulse">
+            <div className="flex justify-between items-start mb-2">
+                <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-3/5" />
+                <div className="h-5 bg-gray-200 dark:bg-gray-700 rounded-full w-14" />
+            </div>
+            <div className="h-3 bg-gray-100 dark:bg-gray-800 rounded w-1/3 mb-3" />
+            <div className="h-3 bg-gray-100 dark:bg-gray-800 rounded w-4/5 mb-2" />
+            <div className="h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full w-full mt-4" />
+        </div>
+    );
+}
 
 function SkeletonGrid() {
     return (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {Array.from({ length: 9 }).map((_, i) => (
-                <div key={i} className="h-36 bg-gray-100 dark:bg-gray-800 rounded-2xl animate-pulse" />
-            ))}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {Array.from({ length: 8 }).map((_, i) => <SkeletonCard key={i} />)}
+        </div>
+    );
+}
+
+// --- Sidebar category item ---
+interface SidebarCategoryProps {
+    parent: string;
+    count: number;
+    isActive: boolean;
+    isExpanded: boolean;
+    children: string[];
+    childCounts: Record<string, number>;
+    onSelect: (p: string | null) => void;
+    onToggleExpand: (p: string) => void;
+}
+function SidebarCategory({
+    parent, count, isActive, isExpanded, children, childCounts, onSelect, onToggleExpand,
+}: SidebarCategoryProps) {
+    const icon = CATEGORY_ICONS[parent] || "📍";
+    const hasChildren = children.length > 0;
+
+    return (
+        <div>
+            <button
+                onClick={() => onSelect(isActive ? null : parent)}
+                className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold transition-all text-left ${
+                    isActive
+                        ? "bg-emerald-500 text-white"
+                        : "hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300"
+                }`}
+            >
+                <span className="text-base leading-none">{icon}</span>
+                <span className="flex-1 truncate">{parent}</span>
+                <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full ${
+                    isActive ? "bg-white/20 text-white" : "bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400"
+                }`}>
+                    {count.toLocaleString()}
+                </span>
+                {hasChildren && isActive && (
+                    <span onClick={(e) => { e.stopPropagation(); onToggleExpand(parent); }}
+                        className="ml-1 opacity-70 hover:opacity-100">
+                        {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                    </span>
+                )}
+            </button>
+            {isActive && isExpanded && hasChildren && (
+                <div className="ml-4 mt-1 space-y-0.5">
+                    {children
+                        .filter((c) => (childCounts[c] ?? 0) > 0)
+                        .sort((a, b) => (childCounts[b] ?? 0) - (childCounts[a] ?? 0))
+                        .slice(0, 12)
+                        .map((child) => (
+                            <div key={child}
+                                className="flex items-center gap-2 px-2 py-1 text-xs text-gray-500 dark:text-gray-400">
+                                <span className="w-1 h-1 rounded-full bg-emerald-400 shrink-0" />
+                                <span className="flex-1 truncate">{formatTag(child)}</span>
+                                <span className="text-gray-400 dark:text-gray-600">
+                                    {(childCounts[child] ?? 0).toLocaleString()}
+                                </span>
+                            </div>
+                        ))}
+                </div>
+            )}
         </div>
     );
 }
@@ -46,10 +155,12 @@ export default function CitySearchResults({
     query,
     city,
     initialPage = 1,
+    initialParentCategory,
 }: {
     query: string;
     city: string;
     initialPage?: number;
+    initialParentCategory?: string;
 }) {
     const router = useRouter();
     const pathname = usePathname();
@@ -59,17 +170,24 @@ export default function CitySearchResults({
     const [error, setError] = useState<string | null>(null);
     const [resolvedCity, setResolvedCity] = useState<string | null>(null);
     const [boundary, setBoundary] = useState<object | null>(null);
-    const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
-    const [sortKey, setSortKey] = useState<SortKey>("confidence");
     const [mobileView, setMobileView] = useState<"list" | "map">("list");
+    const [showMobileFilters, setShowMobileFilters] = useState(false);
 
-    // Pagination state
+    // Filters
+    const [parentCategoryFilter, setParentCategoryFilter] = useState<string | null>(initialParentCategory ?? null);
+    const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+    const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
+    const [sortKey, setSortKey] = useState<SortKey>("confidence");
+
+    // Category counts from API (for sidebar)
+    const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({});
+
+    // Pagination
     const [page, setPage] = useState(initialPage);
     const [totalCount, setTotalCount] = useState(0);
     const [totalPages, setTotalPages] = useState(1);
-    const [limit, setLimit] = useState<number>(() => DEFAULT_LIMIT);
+    const [limit, setLimit] = useState<number>(DEFAULT_LIMIT);
 
-    // Track whether geocoding has completed for this city
     const geocodeRef = useRef<{
         city: string;
         bbox: { min_lat: number; max_lat: number; min_lon: number; max_lon: number } | null;
@@ -77,7 +195,7 @@ export default function CitySearchResults({
         boundary: object | null;
     } | null>(null);
 
-    // Read saved page size from localStorage on mount
+    // Load saved page size
     useEffect(() => {
         const saved = localStorage.getItem("stillopen_page_size");
         if (saved) {
@@ -86,12 +204,12 @@ export default function CitySearchResults({
         }
     }, []);
 
-    // Reset page when query/city changes
+    // Sync page from prop
     useEffect(() => {
         setPage(initialPage);
     }, [initialPage]);
 
-    // Phase 1: geocode city (once per city value)
+    // Phase 1: geocode city
     useEffect(() => {
         let cancelled = false;
         setBoundary(null);
@@ -108,16 +226,12 @@ export default function CitySearchResults({
                 if (cancelled) return;
 
                 if (!geoResult) {
-                    // Fallback: search by city name in DB directly (no bbox)
                     geocodeRef.current = { city, bbox: null, resolved: city, boundary: null };
                     setResolvedCity(city);
                 } else {
                     const resolved = geoResult.displayName.split(",")[0].trim();
                     geocodeRef.current = {
-                        city,
-                        bbox: geoResult.bbox,
-                        resolved,
-                        boundary: geoResult.boundary ?? null,
+                        city, bbox: geoResult.bbox, resolved, boundary: geoResult.boundary ?? null,
                     };
                     setResolvedCity(resolved);
                     setBoundary(geoResult.boundary ?? null);
@@ -138,10 +252,10 @@ export default function CitySearchResults({
         return () => { cancelled = true; };
     }, [city]);
 
-    // Phase 2: fetch places once geocoding is done + on page/limit/query changes
+    // Phase 2: fetch places
     useEffect(() => {
-        if (!geocodeRef.current) return; // geocoding not done yet
-        if (geocodeRef.current.city !== city) return; // stale
+        if (!geocodeRef.current) return;
+        if (geocodeRef.current.city !== city) return;
 
         let cancelled = false;
         setLoading(true);
@@ -149,12 +263,21 @@ export default function CitySearchResults({
 
         const { bbox: activeBbox } = geocodeRef.current;
 
-        searchPlaces(query, limit, activeBbox ?? undefined, (page - 1) * limit, activeBbox ? undefined : city, page)
+        searchPlaces(
+            query,
+            limit,
+            activeBbox ?? undefined,
+            (page - 1) * limit,
+            activeBbox ? undefined : city,
+            page,
+            parentCategoryFilter ?? undefined,
+        )
             .then((data) => {
                 if (cancelled) return;
                 setResults(data.results);
                 setTotalCount(data.total_count);
                 setTotalPages(data.total_pages);
+                if (data.category_counts) setCategoryCounts(data.category_counts);
                 setLoading(false);
             })
             .catch((err: unknown) => {
@@ -166,21 +289,30 @@ export default function CitySearchResults({
 
         return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [resolvedCity, query, page, limit]);
+    }, [resolvedCity, query, page, limit, parentCategoryFilter]);
 
-    const categories = useMemo(() => {
-        const cats = new Set(results.map((r) => r.category).filter(Boolean) as string[]);
-        return Array.from(cats).sort();
+    // Compute child category counts from current page results
+    const childCounts = useMemo(() => {
+        const counts: Record<string, number> = {};
+        for (const r of results) {
+            if (r.category) counts[r.category] = (counts[r.category] ?? 0) + 1;
+        }
+        return counts;
     }, [results]);
 
+    // Stats from current page
     const stats = useMemo(() => {
         const open = results.filter((r) => r.status?.toLowerCase() === "open").length;
         const closed = results.filter((r) => r.status?.toLowerCase() === "closed").length;
-        return { open, closed, total: results.length };
+        return { open, closed, unknown: results.length - open - closed, total: results.length };
     }, [results]);
 
-    const sorted = useMemo(() => {
-        let list = categoryFilter ? results.filter((r) => r.category === categoryFilter) : results;
+    // Client-side status filter + sort
+    const displayed = useMemo(() => {
+        let list = results;
+        if (statusFilter !== "all") {
+            list = list.filter((r) => r.status?.toLowerCase() === statusFilter);
+        }
         if (sortKey === "confidence") {
             list = [...list].sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0));
         } else if (sortKey === "name") {
@@ -192,35 +324,62 @@ export default function CitySearchResults({
             );
         }
         return list;
-    }, [results, categoryFilter, sortKey]);
+    }, [results, statusFilter, sortKey]);
 
-    const handlePageChange = (newPage: number) => {
+    const handlePageChange = useCallback((newPage: number) => {
         setPage(newPage);
-        setCategoryFilter(null); // reset filter on page change
         const params = new URLSearchParams();
         if (query) params.set("q", query);
         params.set("city", city);
         params.set("page", String(newPage));
+        if (parentCategoryFilter) params.set("parent_category", parentCategoryFilter);
         router.push(`${pathname}?${params.toString()}`);
         window.scrollTo({ top: 0, behavior: "smooth" });
-    };
+    }, [query, city, parentCategoryFilter, pathname, router]);
 
-    const handleLimitChange = (newLimit: number) => {
+    const handleLimitChange = useCallback((newLimit: number) => {
         localStorage.setItem("stillopen_page_size", String(newLimit));
         setLimit(newLimit);
         setPage(1);
-        const params = new URLSearchParams();
-        if (query) params.set("q", query);
-        params.set("city", city);
-        params.set("page", "1");
-        router.push(`${pathname}?${params.toString()}`);
-    };
+    }, []);
+
+    const handleCategorySelect = useCallback((cat: string | null) => {
+        setParentCategoryFilter(cat);
+        setExpandedCategory(cat);
+        setPage(1);
+        setStatusFilter("all");
+    }, []);
+
+    const clearAllFilters = useCallback(() => {
+        setParentCategoryFilter(null);
+        setExpandedCategory(null);
+        setStatusFilter("all");
+        setPage(1);
+    }, []);
 
     const displayCity = resolvedCity || city;
     const queryLabel = query ? toTitleCase(query) : "All Places";
 
-    // ---- Loading skeleton ----
-    if (loading) {
+    // Ordered list of parent categories for sidebar (by count desc)
+    const orderedParents = useMemo(() => {
+        const parents = Object.keys(categoryCounts);
+        return parents.sort((a, b) => (categoryCounts[b] ?? 0) - (categoryCounts[a] ?? 0));
+    }, [categoryCounts]);
+
+    // Active filter chips
+    const activeFilters: { label: string; onRemove: () => void }[] = [];
+    if (parentCategoryFilter) {
+        activeFilters.push({ label: parentCategoryFilter, onRemove: () => handleCategorySelect(null) });
+    }
+    if (statusFilter !== "all") {
+        activeFilters.push({
+            label: statusFilter.charAt(0).toUpperCase() + statusFilter.slice(1) + " only",
+            onRemove: () => setStatusFilter("all"),
+        });
+    }
+
+    // --- Loading skeleton ---
+    if (loading && results.length === 0) {
         return (
             <div className="flex flex-col gap-6 w-full">
                 <div className="h-9 w-72 bg-gray-200 dark:bg-gray-700 rounded-lg animate-pulse" />
@@ -234,7 +393,6 @@ export default function CitySearchResults({
         );
     }
 
-    // ---- Error state ----
     if (error) {
         return (
             <div className="flex flex-col items-center justify-center p-16 text-center gap-4">
@@ -244,8 +402,7 @@ export default function CitySearchResults({
         );
     }
 
-    // ---- Empty state ----
-    if (results.length === 0) {
+    if (!loading && results.length === 0) {
         return (
             <div className="flex flex-col items-center justify-center p-16 text-center gap-4">
                 <MapPin className="w-12 h-12 text-gray-300 dark:text-gray-600" />
@@ -258,16 +415,80 @@ export default function CitySearchResults({
         );
     }
 
+    // Sidebar content (shared between desktop sidebar + mobile bottom sheet)
+    const sidebarContent = (
+        <div className="flex flex-col gap-1 h-full">
+            {/* Status filters */}
+            <div className="pb-3 mb-2 border-b border-gray-100 dark:border-gray-800">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-2 px-3">
+                    Status
+                </p>
+                <div className="flex flex-col gap-0.5">
+                    {(["all", "open", "closed", "unknown"] as StatusFilter[]).map((s) => (
+                        <button
+                            key={s}
+                            onClick={() => setStatusFilter(s)}
+                            className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-sm font-semibold transition-all text-left ${
+                                statusFilter === s
+                                    ? "bg-emerald-500 text-white"
+                                    : "hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-400"
+                            }`}
+                        >
+                            {s === "open" && <CheckCircle className="w-3.5 h-3.5" />}
+                            {s === "closed" && <XCircle className="w-3.5 h-3.5" />}
+                            {s === "unknown" && <span className="w-3.5 h-3.5 text-center leading-none">?</span>}
+                            {s === "all" && <span className="w-3.5 h-3.5 text-center">✦</span>}
+                            <span>{s === "all" ? "All statuses" : s.charAt(0).toUpperCase() + s.slice(1)}</span>
+                            {s !== "all" && (
+                                <span className={`ml-auto text-xs ${statusFilter === s ? "text-white/70" : "text-gray-400"}`}>
+                                    {s === "open" ? stats.open : s === "closed" ? stats.closed : stats.unknown}
+                                </span>
+                            )}
+                        </button>
+                    ))}
+                </div>
+            </div>
+
+            {/* Category filters */}
+            <div className="flex-1 overflow-y-auto">
+                <div className="flex items-center justify-between px-3 mb-2">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500">
+                        Category
+                    </p>
+                    {parentCategoryFilter && (
+                        <button onClick={() => handleCategorySelect(null)}
+                            className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold hover:underline">
+                            Clear
+                        </button>
+                    )}
+                </div>
+                <div className="flex flex-col gap-0.5">
+                    {orderedParents.map((parent) => (
+                        <SidebarCategory
+                            key={parent}
+                            parent={parent}
+                            count={categoryCounts[parent] ?? 0}
+                            isActive={parentCategoryFilter === parent}
+                            isExpanded={expandedCategory === parent}
+                            children={[]} // child category breakdown shown from page results
+                            childCounts={childCounts}
+                            onSelect={handleCategorySelect}
+                            onToggleExpand={setExpandedCategory}
+                        />
+                    ))}
+                </div>
+            </div>
+        </div>
+    );
+
     return (
-        <div className="flex flex-col gap-6 w-full">
+        <div className="flex flex-col gap-4 w-full">
             {/* Header */}
             <div className="flex flex-col gap-1">
-                <h1 className="text-3xl font-black text-gray-900 dark:text-white tracking-tight">
+                <h1 className="text-2xl font-black text-gray-900 dark:text-white tracking-tight">
                     {query ? (
                         <>
-                            <span className="text-emerald-500">{queryLabel}</span>
-                            {" in "}
-                            {displayCity}
+                            <span className="text-emerald-500">{queryLabel}</span>{" in "}{displayCity}
                         </>
                     ) : (
                         <>All Places in <span className="text-emerald-500">{displayCity}</span></>
@@ -278,186 +499,279 @@ export default function CitySearchResults({
                 </p>
             </div>
 
-            {/* Stats bar */}
-            <div className="flex items-center gap-6 flex-wrap">
-                <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-bold text-sm">
-                    <CheckCircle className="w-4 h-4" /> {stats.open} open
-                </div>
-                <div className="flex items-center gap-1.5 text-gray-500 dark:text-gray-400 font-bold text-sm">
-                    <XCircle className="w-4 h-4" /> {stats.closed} closed
-                </div>
-                <div className="text-gray-400 text-sm">
-                    {stats.total - stats.open - stats.closed} unknown
-                </div>
-                {/* Page size selector */}
-                <div className="ml-auto flex items-center gap-1.5">
-                    <span className="text-xs text-gray-400 hidden sm:inline">Show:</span>
-                    {PAGE_SIZES.map((size) => (
-                        <button
-                            key={size}
-                            onClick={() => handleLimitChange(size)}
-                            className={`px-2.5 py-1 rounded-md text-xs font-bold border transition-all ${
-                                limit === size
-                                    ? "bg-emerald-500 text-white border-emerald-500"
-                                    : "border-gray-200 dark:border-gray-700 hover:border-emerald-400 hover:text-emerald-600"
-                            }`}
-                        >
-                            {size}
-                        </button>
+            {/* Active filter chips */}
+            {activeFilters.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2">
+                    {activeFilters.map((f) => (
+                        <span key={f.label}
+                            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
+                            {f.label}
+                            <button onClick={f.onRemove} className="hover:text-emerald-900 dark:hover:text-emerald-200">
+                                <X className="w-3 h-3" />
+                            </button>
+                        </span>
                     ))}
-                    <span className="text-xs text-gray-400 hidden sm:inline">per page</span>
-                </div>
-            </div>
-
-            {/* Category filters + sort */}
-            <div className="flex flex-wrap items-center gap-2">
-                <button
-                    onClick={() => setCategoryFilter(null)}
-                    className={`px-3 py-1 rounded-full text-xs font-bold border transition-all ${
-                        !categoryFilter
-                            ? "bg-emerald-500 text-white border-emerald-500"
-                            : "text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:border-emerald-300"
-                    }`}
-                >
-                    All
-                </button>
-                {categories.map((cat) => (
-                    <button
-                        key={cat}
-                        onClick={() => setCategoryFilter(cat === categoryFilter ? null : cat)}
-                        className={`px-3 py-1 rounded-full text-xs font-bold border transition-all ${
-                            categoryFilter === cat
-                                ? "bg-emerald-500 text-white border-emerald-500"
-                                : "text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:border-emerald-300"
-                        }`}
-                    >
-                        {formatTag(cat)}
+                    <button onClick={clearAllFilters}
+                        className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 font-semibold underline">
+                        Clear all
                     </button>
-                ))}
-                <div className="ml-auto flex items-center gap-1 flex-shrink-0">
-                    <span className="text-xs text-gray-400 mr-1 hidden sm:inline">Sort:</span>
-                    {(["confidence", "name", "status"] as SortKey[]).map((key) => (
+                </div>
+            )}
+
+            {/* Stats + controls bar */}
+            <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-4 text-sm">
+                    <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-bold">
+                        <CheckCircle className="w-3.5 h-3.5" /> {stats.open} open
+                    </span>
+                    <span className="flex items-center gap-1.5 text-rose-500 dark:text-rose-400 font-bold">
+                        <XCircle className="w-3.5 h-3.5" /> {stats.closed} closed
+                    </span>
+                    <span className="text-gray-400 text-sm">{stats.unknown} unknown</span>
+                </div>
+
+                <div className="ml-auto flex items-center gap-2 flex-wrap">
+                    {/* Sort */}
+                    <select
+                        value={sortKey}
+                        onChange={(e) => setSortKey(e.target.value as SortKey)}
+                        className="text-xs font-semibold border border-gray-200 dark:border-gray-700 rounded-lg px-2.5 py-1.5 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300 cursor-pointer focus:outline-none focus:ring-1 focus:ring-emerald-400"
+                    >
+                        <option value="confidence">Confidence</option>
+                        <option value="name">Name A–Z</option>
+                        <option value="status">Open first</option>
+                    </select>
+
+                    {/* Page size */}
+                    <div className="flex items-center gap-1">
+                        {PAGE_SIZES.map((size) => (
+                            <button
+                                key={size}
+                                onClick={() => handleLimitChange(size)}
+                                className={`px-2 py-1 rounded-md text-xs font-bold border transition-all ${
+                                    limit === size
+                                        ? "bg-emerald-500 text-white border-emerald-500"
+                                        : "border-gray-200 dark:border-gray-700 hover:border-emerald-400 hover:text-emerald-600 text-gray-500 dark:text-gray-400"
+                                }`}
+                            >
+                                {size}
+                            </button>
+                        ))}
+                    </div>
+
+                    {/* Mobile filters button */}
+                    <button
+                        onClick={() => setShowMobileFilters(true)}
+                        className="lg:hidden inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 text-xs font-semibold text-gray-600 dark:text-gray-400 hover:border-emerald-400 transition-all"
+                    >
+                        <SlidersHorizontal className="w-3.5 h-3.5" /> Filters
+                        {activeFilters.length > 0 && (
+                            <span className="ml-0.5 w-4 h-4 rounded-full bg-emerald-500 text-white text-[10px] flex items-center justify-center">
+                                {activeFilters.length}
+                            </span>
+                        )}
+                    </button>
+
+                    {/* Mobile list/map toggle */}
+                    <div className="flex lg:hidden items-center gap-1">
                         <button
-                            key={key}
-                            onClick={() => setSortKey(key)}
-                            className={`px-3 py-1 rounded-full text-xs font-bold border transition-all ${
-                                sortKey === key
-                                    ? "bg-gray-900 dark:bg-white text-white dark:text-gray-900 border-gray-900 dark:border-white"
-                                    : "text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:border-gray-400"
+                            onClick={() => setMobileView("list")}
+                            className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+                                mobileView === "list"
+                                    ? "bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800"
+                                    : "text-gray-500 border-gray-200 dark:border-gray-700"
                             }`}
                         >
-                            {key === "confidence" ? "Confidence" : key === "name" ? "Name" : "Open first"}
+                            <List className="w-3.5 h-3.5" /> List
                         </button>
-                    ))}
-                </div>
-            </div>
-
-            {/* Mobile view toggle */}
-            <div className="flex lg:hidden items-center gap-2 self-end">
-                <button
-                    onClick={() => setMobileView("list")}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-semibold border transition-all ${
-                        mobileView === "list"
-                            ? "bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800"
-                            : "text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:border-emerald-200"
-                    }`}
-                >
-                    <List className="w-3.5 h-3.5" /> List
-                </button>
-                <button
-                    onClick={() => setMobileView("map")}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-semibold border transition-all ${
-                        mobileView === "map"
-                            ? "bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800"
-                            : "text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:border-emerald-200"
-                    }`}
-                >
-                    <MapIcon className="w-3.5 h-3.5" /> Map
-                </button>
-            </div>
-
-            {/* Results grid + map */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 w-full h-[78vh] relative">
-                {/* Scrollable result cards */}
-                <div className={`flex flex-col gap-3 overflow-y-auto pr-1 pb-4 ${mobileView === "map" ? "hidden lg:flex" : "flex"}`}>
-                    {sorted.map((res) => (
-                        <Link
-                            href={`/place/${res.id}`}
-                            key={res.id}
-                            className="block flex-shrink-0 w-full bg-white dark:bg-gray-900 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-800 hover:shadow-lg hover:border-emerald-200 dark:hover:border-emerald-800 transition-all group overflow-hidden"
+                        <button
+                            onClick={() => setMobileView("map")}
+                            className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+                                mobileView === "map"
+                                    ? "bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800"
+                                    : "text-gray-500 border-gray-200 dark:border-gray-700"
+                            }`}
                         >
-                            <div className="flex gap-0">
-                                {res.photo_url && (
-                                    <div className="w-24 flex-shrink-0 relative self-stretch min-h-[120px] bg-gray-100">
-                                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                                        <img
-                                            src={res.photo_url}
-                                            alt={res.name || "Place"}
-                                            className="absolute inset-0 w-full h-full object-cover"
-                                        />
-                                    </div>
-                                )}
-                                <div className="flex flex-col flex-1 min-w-0 p-4 min-h-[120px]">
-                                    <div className="flex justify-between items-start gap-2">
-                                        <h2 className="text-base font-bold text-gray-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors leading-tight">
-                                            {res.name || "Unknown Place"}
-                                        </h2>
-                                        <div className="flex-shrink-0">
-                                            <StatusBadge status={res.status} />
-                                        </div>
-                                    </div>
-                                    {res.category && (
-                                        <span className="mt-1 inline-flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400 font-bold uppercase tracking-wider">
-                                            <Tag className="w-3 h-3" />
-                                            {formatTag(res.category!)}
-                                        </span>
-                                    )}
-                                    {res.address && (
-                                        <p className="mt-2 flex items-start gap-1.5 text-xs text-gray-500 dark:text-gray-400">
-                                            <MapPin className="w-3.5 h-3.5 mt-0.5 shrink-0 text-gray-400" />
-                                            <span className="line-clamp-2">{res.address}</span>
-                                        </p>
-                                    )}
-                                    {(res.status === "open" || res.status === "closed") && (
-                                        <div className="mt-auto pt-2 flex items-center gap-2">
-                                            <div className="flex-1 h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
-                                                <div
-                                                    className={`h-full rounded-full transition-all ${
-                                                        (res.confidence ?? 0) > 0.75
-                                                            ? "bg-emerald-500"
-                                                            : (res.confidence ?? 0) >= 0.5
-                                                                ? "bg-amber-400"
-                                                                : "bg-rose-400"
-                                                    }`}
-                                                    style={{ width: `${((res.confidence ?? 0) * 100).toFixed(0)}%` }}
-                                                />
-                                            </div>
-                                            <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500 shrink-0">
-                                                {((res.confidence ?? 0) * 100).toFixed(0)}%
-                                            </span>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        </Link>
-                    ))}
-
-                    {/* Pagination bar */}
-                    <PaginationBar
-                        page={page}
-                        totalPages={totalPages}
-                        totalCount={totalCount}
-                        limit={limit}
-                        offset={(page - 1) * limit}
-                        onPageChange={handlePageChange}
-                    />
-                </div>
-
-                {/* Map panel */}
-                <div className={`h-full rounded-2xl shadow-xl overflow-hidden border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 ${mobileView === "map" ? "block" : "hidden lg:block"}`}>
-                    <ResultsMap results={sorted} boundary={boundary} />
+                            <MapIcon className="w-3.5 h-3.5" /> Map
+                        </button>
+                    </div>
                 </div>
             </div>
+
+            {/* Main 3-panel layout: Sidebar | Results | Map */}
+            <div className="flex gap-5 w-full" style={{ minHeight: "70vh" }}>
+                {/* LEFT SIDEBAR — desktop only */}
+                <aside className="hidden lg:flex flex-col w-56 shrink-0 bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 p-3 overflow-hidden">
+                    <div className="flex items-center justify-between mb-3 px-1">
+                        <span className="text-xs font-black uppercase tracking-widest text-gray-500 dark:text-gray-400">
+                            Filters
+                        </span>
+                        {activeFilters.length > 0 && (
+                            <button onClick={clearAllFilters}
+                                className="text-[10px] font-bold text-emerald-600 hover:underline">
+                                Clear all
+                            </button>
+                        )}
+                    </div>
+                    {sidebarContent}
+                </aside>
+
+                {/* RESULTS AREA */}
+                <div className={`flex flex-col gap-3 flex-1 min-w-0 overflow-y-auto pb-4 ${mobileView === "map" ? "hidden lg:flex" : "flex"}`}>
+                    {/* Showing range label */}
+                    {!loading && totalCount > 0 && (
+                        <p className="text-xs text-gray-400 dark:text-gray-500 shrink-0">
+                            Showing{" "}
+                            <span className="font-semibold text-gray-600 dark:text-gray-300">
+                                {((page - 1) * limit + 1).toLocaleString()}–
+                                {Math.min(page * limit, totalCount).toLocaleString()}
+                            </span>{" "}
+                            of{" "}
+                            <span className="font-semibold text-gray-600 dark:text-gray-300">
+                                {totalCount.toLocaleString()}
+                            </span>{" "}
+                            results
+                        </p>
+                    )}
+
+                    {loading ? (
+                        <SkeletonGrid />
+                    ) : displayed.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-16 text-center gap-3">
+                            <MapPin className="w-10 h-10 text-gray-300 dark:text-gray-600" />
+                            <p className="text-gray-500 dark:text-gray-400 text-sm">
+                                No results match the current filters.
+                            </p>
+                            <button onClick={clearAllFilters}
+                                className="text-sm text-emerald-600 dark:text-emerald-400 font-semibold hover:underline">
+                                Clear filters
+                            </button>
+                        </div>
+                    ) : (
+                        <>
+                            {/* Results grid: 2 cols on sm+, 1 col mobile */}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                {displayed.map((res) => (
+                                    <ResultCard key={res.id} res={res} />
+                                ))}
+                            </div>
+
+                            <PaginationBar
+                                page={page}
+                                totalPages={totalPages}
+                                totalCount={totalCount}
+                                limit={limit}
+                                offset={(page - 1) * limit}
+                                onPageChange={handlePageChange}
+                            />
+                        </>
+                    )}
+                </div>
+
+                {/* MAP PANEL — desktop right side */}
+                <div className={`rounded-2xl shadow-xl overflow-hidden border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 ${
+                    mobileView === "map" ? "flex-1" : "hidden lg:block"
+                } lg:w-[38%] lg:flex-none shrink-0`} style={{ minHeight: "60vh" }}>
+                    <ResultsMap results={displayed} boundary={boundary} />
+                </div>
+            </div>
+
+            {/* MOBILE BOTTOM SHEET FILTERS */}
+            {showMobileFilters && (
+                <>
+                    {/* Backdrop */}
+                    <div
+                        className="fixed inset-0 bg-black/40 z-40 lg:hidden"
+                        onClick={() => setShowMobileFilters(false)}
+                    />
+                    {/* Sheet */}
+                    <div className="fixed bottom-0 left-0 right-0 z-50 lg:hidden bg-white dark:bg-gray-900 rounded-t-2xl shadow-2xl border-t border-gray-100 dark:border-gray-800 max-h-[80vh] flex flex-col">
+                        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-gray-800 shrink-0">
+                            <span className="font-bold text-gray-900 dark:text-white">Filters</span>
+                            <button onClick={() => setShowMobileFilters(false)}
+                                className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+                                <X className="w-5 h-5 text-gray-500" />
+                            </button>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-4">
+                            {sidebarContent}
+                        </div>
+                        <div className="px-4 py-3 border-t border-gray-100 dark:border-gray-800 shrink-0">
+                            <button
+                                onClick={() => setShowMobileFilters(false)}
+                                className="w-full py-3 rounded-xl bg-emerald-500 text-white font-bold text-sm hover:bg-emerald-600 transition-colors"
+                            >
+                                Show {displayed.length.toLocaleString()} results
+                            </button>
+                        </div>
+                    </div>
+                </>
+            )}
         </div>
+    );
+}
+
+// --- Individual result card ---
+function ResultCard({ res }: { res: SearchResultType }) {
+    const parentColor = CATEGORY_COLORS[res.parent_category ?? "Other"] ?? CATEGORY_COLORS["Other"];
+
+    return (
+        <Link
+            href={`/place/${res.id}`}
+            className="block bg-white dark:bg-gray-900 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-800 hover:shadow-lg hover:border-emerald-200 dark:hover:border-emerald-800 transition-all group overflow-hidden"
+        >
+            <div className="flex flex-col p-4 min-h-[130px]">
+                {/* Name + status */}
+                <div className="flex justify-between items-start gap-2 mb-2">
+                    <h2 className="text-sm font-bold text-gray-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors leading-tight line-clamp-2">
+                        {res.name || "Unknown Place"}
+                    </h2>
+                    <div className="shrink-0">
+                        <StatusBadge status={res.status} predictionType={res.prediction_type} />
+                    </div>
+                </div>
+
+                {/* Category badges */}
+                <div className="flex flex-wrap items-center gap-1.5 mb-2">
+                    {res.parent_category && (
+                        <span className={`inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full ${parentColor}`}>
+                            {CATEGORY_ICONS[res.parent_category] ?? "📍"} {res.parent_category}
+                        </span>
+                    )}
+                    {res.category && res.category !== res.parent_category && (
+                        <span className="inline-flex items-center gap-1 text-[10px] text-gray-400 dark:text-gray-500 uppercase tracking-wide">
+                            <Tag className="w-2.5 h-2.5" /> {formatTag(res.category)}
+                        </span>
+                    )}
+                </div>
+
+                {/* Address */}
+                {res.address && (
+                    <p className="flex items-start gap-1.5 text-xs text-gray-500 dark:text-gray-400 mt-auto">
+                        <MapPin className="w-3.5 h-3.5 mt-0.5 shrink-0 text-gray-400" />
+                        <span className="line-clamp-2">{res.address}</span>
+                    </p>
+                )}
+
+                {/* Confidence bar */}
+                {(res.status === "open" || res.status === "closed") && res.confidence != null && (
+                    <div className="mt-3 flex items-center gap-2">
+                        <div className="flex-1 h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+                            <div
+                                className={`h-full rounded-full transition-all ${
+                                    res.confidence > 0.75 ? "bg-emerald-500"
+                                    : res.confidence >= 0.5 ? "bg-amber-400"
+                                    : "bg-rose-400"
+                                }`}
+                                style={{ width: `${(res.confidence * 100).toFixed(0)}%` }}
+                            />
+                        </div>
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500 shrink-0">
+                            {(res.confidence * 100).toFixed(0)}%
+                        </span>
+                    </div>
+                )}
+            </div>
+        </Link>
     );
 }

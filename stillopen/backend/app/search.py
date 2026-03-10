@@ -2,6 +2,7 @@ import json
 import os
 import re
 import time
+from collections import defaultdict
 import pandas as pd
 import numpy as np
 from sqlalchemy import text, insert
@@ -11,6 +12,7 @@ from .models import Place
 from .predict import predict_place, predict_status, predict_batch
 from .utils import reverse_geocode
 from utils.canonical_metadata import build_canonical_metadata
+from .categories import get_parent_category, get_children, all_mapped_categories
 
 # ---------------------------------------------------------------------------
 # Simple in-memory query cache (TTL = 60 s, max 256 entries)
@@ -322,6 +324,8 @@ def ensure_indexes():
            ON places(category)""",
         """CREATE INDEX IF NOT EXISTS places_city_meta_idx
            ON places((metadata_json->>'city'))""",
+        """CREATE INDEX IF NOT EXISTS places_parent_cat_idx
+           ON places(category)""",
     ]
     try:
         with engine.begin() as conn:
@@ -363,8 +367,9 @@ def _search_postgres(
     max_lat: float = None,
     min_lon: float = None,
     max_lon: float = None,
+    parent_category: str = None,
 ):
-    """Returns (results_list, total_count)."""
+    """Returns (results_list, total_count, category_counts)."""
     has_bbox = all(v is not None for v in [min_lat, max_lat, min_lon, max_lon])
     has_query = bool(query and query.strip())
     has_city = bool(city and len(city.strip()) >= 2)
@@ -414,6 +419,22 @@ def _search_postgres(
                     "max_lon": max_lon, "max_lat": max_lat,
                 })
 
+            # --- Parent category filter ---
+            if parent_category and parent_category != "Other":
+                children = get_children(parent_category)
+                if children:
+                    cat_params = {f"_cat_{i}": c for i, c in enumerate(children)}
+                    placeholders = ", ".join(f":_cat_{i}" for i in range(len(children)))
+                    where_parts.append(f"LOWER(category) IN ({placeholders})")
+                    params.update(cat_params)
+            elif parent_category == "Other":
+                mapped = list(all_mapped_categories())
+                if mapped:
+                    cat_params = {f"_cat_{i}": c for i, c in enumerate(mapped)}
+                    placeholders = ", ".join(f":_cat_{i}" for i in range(len(mapped)))
+                    where_parts.append(f"(category IS NULL OR LOWER(category) NOT IN ({placeholders}))")
+                    params.update(cat_params)
+
             where_clause = " AND ".join(where_parts) if where_parts else "TRUE"
 
             # Fallback ordering when no text query
@@ -422,11 +443,22 @@ def _search_postgres(
                 order_parts.append("name ASC")
             order_clause = ", ".join(order_parts)
 
+            # --- Category counts for sidebar (aggregation, separate from pagination) ---
+            cat_count_sql = text(
+                f"SELECT category, COUNT(*) AS n FROM places WHERE {where_clause} GROUP BY category"
+            )
+            cat_rows = conn.execute(cat_count_sql, params).fetchall()
+            parent_counts: dict[str, int] = defaultdict(int)
+            for cr in cat_rows:
+                parent = get_parent_category(cr.category or "")
+                parent_counts[parent] += cr.n
+            category_counts = dict(parent_counts)
+
             # --- COUNT for pagination ---
             count_sql = text(f"SELECT COUNT(*) FROM places WHERE {where_clause}")
             total_count = conn.execute(count_sql, params).scalar() or 0
 
-            # --- Lean SELECT — no metadata_json in response, but fetch for ML ---
+            # --- Lean SELECT — fetch metadata_json for ML batch prediction ---
             data_sql = text(f"""
                 SELECT
                     place_id,
@@ -465,7 +497,6 @@ def _search_postgres(
 
             results = []
             for row, meta, pred in zip(rows, raw_metadatas, preds):
-                # Phone/website: prefer top-level scalar, fall back to first array element
                 def _first_value(arr):
                     if not isinstance(arr, list) or not arr:
                         return None
@@ -480,6 +511,7 @@ def _search_postgres(
                     "id": str(row.place_id),
                     "name": row.name or "",
                     "category": row.category,
+                    "parent_category": get_parent_category(row.category or ""),
                     "address": row.address or "",
                     "city": row.city or "",
                     "state": row.state or "",
@@ -496,12 +528,12 @@ def _search_postgres(
                     "website_http_code": row.website_http_code,
                 })
 
-            return results, total_count
+            return results, total_count, category_counts
 
         except Exception as e:
             print(f"PostgreSQL search error: {e}")
             import traceback; traceback.print_exc()
-            return [], 0
+            return [], 0, {}
 
 
 # =============================================================================
@@ -516,8 +548,9 @@ def _search_sqlite(
     max_lat: float = None,
     min_lon: float = None,
     max_lon: float = None,
+    parent_category: str = None,
 ):
-    """Returns (results_list, total_count)."""
+    """Returns (results_list, total_count, category_counts)."""
     has_bbox = all(v is not None for v in [min_lat, max_lat, min_lon, max_lon])
     has_query = bool(query and query.strip())
 
@@ -540,6 +573,14 @@ def _search_sqlite(
                     "min_lat": min_lat, "max_lat": max_lat,
                     "min_lon": min_lon, "max_lon": max_lon,
                 })
+
+            # parent_category filter (SQLite — simple LIKE approach)
+            if parent_category and parent_category != "Other":
+                children = get_children(parent_category)
+                if children:
+                    # SQLite doesn't support :list params, build literal list
+                    placeholders = ", ".join(f"''{c}''" for c in children)
+                    where_parts.append(f"LOWER(category) IN ({placeholders})")
 
             where_clause = " AND ".join(where_parts) if where_parts else "1=1"
 
@@ -578,16 +619,21 @@ def _search_sqlite(
             preds = predict_batch(metadatas)
 
             out = []
+            cat_counts: dict[str, int] = defaultdict(int)
             for row, meta, pred in zip(rows, metadatas, preds):
                 city = meta.get("city", "")
                 state = meta.get("state", "")
+                raw_cat = getattr(row, "category", None)
+                parent = get_parent_category(raw_cat or "")
+                cat_counts[parent] += 1
                 out.append({
                     "id": str(row.place_id),
                     "name": row.name or "",
                     "address": row.address or "",
                     "city": city,
                     "state": state,
-                    "category": getattr(row, "category", None),
+                    "category": raw_cat,
+                    "parent_category": parent,
                     "source": getattr(row, "source", None),
                     "lat": getattr(row, "lat", None),
                     "lon": getattr(row, "lon", None),
@@ -601,10 +647,10 @@ def _search_sqlite(
                     "website_http_code": meta.get("website_http_code"),
                 })
 
-            return out, total_count
+            return out, total_count, dict(cat_counts)
         except Exception as e:
             print(f"SQLite search error: {e}")
-            return [], 0
+            return [], 0, {}
 
 
 def search_places(
@@ -617,17 +663,18 @@ def search_places(
     max_lat: float = None,
     min_lon: float = None,
     max_lon: float = None,
+    parent_category: str = None,
 ) -> dict:
     """Return a SearchResponse-compatible dict with results + pagination metadata."""
     limit = max(1, min(limit, 1000))
 
-    cache_key = (query, city, limit, offset, min_lat, max_lat, min_lon, max_lon)
+    cache_key = (query, city, limit, offset, min_lat, max_lat, min_lon, max_lon, parent_category)
     cached = _cache_get(cache_key)
     if cached is not None:
         return cached
 
     if IS_POSTGRES:
-        results, total_count = _search_postgres(
+        results, total_count, category_counts = _search_postgres(
             query,
             city=city,
             limit=limit,
@@ -636,12 +683,14 @@ def search_places(
             max_lat=max_lat,
             min_lon=min_lon,
             max_lon=max_lon,
+            parent_category=parent_category,
         )
     else:
-        results, total_count = _search_sqlite(
+        results, total_count, category_counts = _search_sqlite(
             query, limit, offset,
             min_lat=min_lat, max_lat=max_lat,
             min_lon=min_lon, max_lon=max_lon,
+            parent_category=parent_category,
         )
 
     total_pages = max(1, (total_count + limit - 1) // limit)
@@ -655,6 +704,7 @@ def search_places(
         "offset": offset,
         "has_next": page < total_pages,
         "has_prev": page > 1,
+        "category_counts": category_counts,
     }
     _cache_set(cache_key, response)
     return response
