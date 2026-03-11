@@ -148,7 +148,7 @@ def load_from_osm(limit: int):
     return records[:limit]
 
 
-def load_from_db(limit: int):
+def load_from_db(limit: int, filter_mode: str = None):
     from dotenv import load_dotenv
     import psycopg2
     import psycopg2.extras
@@ -156,12 +156,28 @@ def load_from_db(limit: int):
     url = os.environ.get("DATABASE_URL", "postgresql://localhost:5432/stillopen")
     url = url.replace("postgresql+psycopg2://", "postgresql://")
     conn = psycopg2.connect(url)
+
+    # Build WHERE clause based on filter mode
+    if filter_mode == "high_risk":
+        # Only records flagged as high closure risk (confidence < 0.75)
+        where = (
+            "WHERE metadata_json->>'closure_risk' = 'high' "
+            "AND jsonb_array_length(COALESCE(metadata_json->'websites','[]'::jsonb)) > 0"
+        )
+    elif filter_mode == "medium_risk":
+        where = (
+            "WHERE metadata_json->>'closure_risk' IN ('high','medium') "
+            "AND jsonb_array_length(COALESCE(metadata_json->'websites','[]'::jsonb)) > 0"
+        )
+    else:
+        where = "WHERE metadata_json ? 'website' OR metadata_json ? 'websites'"
+
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
-            """
+            f"""
             SELECT place_id, name, address, metadata_json
             FROM places
-            WHERE metadata_json ? 'website' OR metadata_json ? 'websites'
+            {where}
             LIMIT %s
             """,
             (limit,),
@@ -171,12 +187,17 @@ def load_from_db(limit: int):
     records = []
     for r in rows:
         meta = r["metadata_json"] or {}
-        url = meta.get("website") or (meta.get("websites") or [None])[0]
+        websites = meta.get("websites") or []
+        if isinstance(websites, list) and websites:
+            first = websites[0]
+            raw_url = first.get("value") or first.get("url") if isinstance(first, dict) else str(first)
+        else:
+            raw_url = meta.get("website")
         records.append({
             "id": r["place_id"],
             "name": r["name"],
-            "url": url,
-            "ground_truth": None,  # Unknown from DB without open field
+            "url": raw_url,
+            "ground_truth": None,
             "address": r["address"] or "",
         })
     return records[:limit]
@@ -248,11 +269,15 @@ def main():
     parser.add_argument("--timeout", type=int, default=5, help="HTTP timeout in seconds (default: 5)")
     parser.add_argument("--write-db", action="store_true",
                         help="Write verification results back to Postgres metadata_json")
+    parser.add_argument("--filter", dest="filter_mode", default=None,
+                        choices=["high_risk", "medium_risk"],
+                        help="Filter DB records: high_risk (conf<0.75) or medium_risk (conf<0.85, partial data)")
     args = parser.parse_args()
 
     print(f"\n{'='*65}")
     print(f"  StillOpen Business Verifier")
-    print(f"  Source: {args.source}  |  Limit: {args.limit}  |  Dry-run: {args.dry_run}  |  Write-DB: {args.write_db}")
+    print(f"  Source: {args.source}  |  Limit: {args.limit}  |  Filter: {args.filter_mode or 'none'}")
+    print(f"  Dry-run: {args.dry_run}  |  Write-DB: {args.write_db}")
     print(f"{'='*65}\n")
 
     db_conn = None
@@ -270,7 +295,7 @@ def main():
     elif args.source == "osm":
         records = load_from_osm(args.limit)
     else:
-        records = load_from_db(args.limit)
+        records = load_from_db(args.limit, filter_mode=args.filter_mode)
 
     has_url = [r for r in records if r["url"]]
     no_url  = [r for r in records if not r["url"]]

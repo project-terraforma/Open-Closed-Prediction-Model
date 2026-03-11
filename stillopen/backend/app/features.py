@@ -204,4 +204,8 @@ def compute_features(record: dict, artifacts: dict = None) -> dict:
     # ── 11. High-Turnover Category ──
     features['high_turnover_category'] = 1 if primary_category.lower() in HIGH_TURNOVER_CATEGORIES else 0
 
+    # ── 12. Website Verified Closed ──
+    # Hard signal: website_status set by verify_businesses.py
+    features['website_verified_closed'] = 1 if record.get('website_status') == 'likely_closed' else 0
+
     return features

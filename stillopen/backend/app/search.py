@@ -368,6 +368,7 @@ def _search_postgres(
     min_lon: float = None,
     max_lon: float = None,
     parent_category: str = None,
+    status_filter: str = None,
 ):
     """Returns (results_list, total_count, category_counts)."""
     has_bbox = all(v is not None for v in [min_lat, max_lat, min_lon, max_lon])
@@ -419,6 +420,14 @@ def _search_postgres(
                     "max_lon": max_lon, "max_lat": max_lat,
                 })
 
+            # --- Status filter (uses pre-computed predicted_status column) ---
+            if status_filter == "open":
+                where_parts.append("predicted_status = 'open'")
+            elif status_filter == "closed":
+                where_parts.append("predicted_status = 'closed'")
+            elif status_filter == "unknown":
+                where_parts.append("predicted_status IS NULL")
+
             # --- Parent category filter ---
             if parent_category and parent_category != "Other":
                 children = get_children(parent_category)
@@ -458,7 +467,7 @@ def _search_postgres(
             count_sql = text(f"SELECT COUNT(*) FROM places WHERE {where_clause}")
             total_count = conn.execute(count_sql, params).scalar() or 0
 
-            # --- Lean SELECT — fetch metadata_json for ML batch prediction ---
+            # --- SELECT — prefers predicted_status column over ML recompute ---
             data_sql = text(f"""
                 SELECT
                     place_id,
@@ -470,9 +479,11 @@ def _search_postgres(
                     ST_Y(geom::geometry) AS lat,
                     COALESCE(metadata_json->>'city', metadata_json->>'addr:city', '') AS city,
                     COALESCE(metadata_json->>'state', metadata_json->>'addr:state', '') AS state,
-                    metadata_json->>'website_status'    AS website_status,
+                    metadata_json->>'website_status'     AS website_status,
                     metadata_json->>'website_checked_at' AS website_checked_at,
                     (metadata_json->>'website_http_code')::int AS website_http_code,
+                    predicted_status,
+                    prediction_confidence,
                     metadata_json
                 FROM places
                 WHERE {where_clause}
@@ -482,7 +493,7 @@ def _search_postgres(
 
             rows = conn.execute(data_sql, params).fetchall()
 
-            # --- Batch ML prediction ---
+            # Separate rows that have pre-computed predictions from those that need ML.
             raw_metadatas = []
             for row in rows:
                 meta = row.metadata_json or {}
@@ -493,17 +504,35 @@ def _search_postgres(
                         meta = {}
                 raw_metadatas.append(meta)
 
-            preds = predict_batch(raw_metadatas)
+            # Only run ML on rows that don't have a stored prediction.
+            needs_ml = [i for i, row in enumerate(rows) if not row.predicted_status]
+            ml_preds_map = {}
+            if needs_ml:
+                ml_inputs = [raw_metadatas[i] for i in needs_ml]
+                ml_results = predict_batch(ml_inputs)
+                for idx, pred in zip(needs_ml, ml_results):
+                    ml_preds_map[idx] = pred
+
+            def _first_value(arr):
+                if not isinstance(arr, list) or not arr:
+                    return None
+                first = arr[0]
+                if isinstance(first, dict):
+                    return first.get("value") or first.get("phone") or first.get("url")
+                return str(first) if first else None
 
             results = []
-            for row, meta, pred in zip(rows, raw_metadatas, preds):
-                def _first_value(arr):
-                    if not isinstance(arr, list) or not arr:
-                        return None
-                    first = arr[0]
-                    if isinstance(first, dict):
-                        return first.get("value") or first.get("phone") or first.get("url")
-                    return str(first) if first else None
+            for i, (row, meta) in enumerate(zip(rows, raw_metadatas)):
+                if row.predicted_status:
+                    # Use fast pre-computed prediction — no ML call needed.
+                    status = row.predicted_status
+                    confidence = row.prediction_confidence
+                    prediction_type = row.predicted_status  # "open" or "closed"
+                else:
+                    pred = ml_preds_map.get(i, {})
+                    status = pred.get("status", "unknown")
+                    confidence = pred.get("confidence")
+                    prediction_type = pred.get("prediction_type")
 
                 phone = meta.get("phone") or _first_value(meta.get("phones"))
                 website = meta.get("website") or _first_value(meta.get("websites"))
@@ -518,9 +547,9 @@ def _search_postgres(
                     "source": row.source,
                     "lat": row.lat,
                     "lon": row.lon,
-                    "status": pred.get("status", "unknown"),
-                    "confidence": pred.get("confidence"),
-                    "prediction_type": pred.get("prediction_type"),
+                    "status": status,
+                    "confidence": confidence,
+                    "prediction_type": prediction_type,
                     "phone": phone,
                     "website": website,
                     "website_status": row.website_status,
@@ -664,11 +693,17 @@ def search_places(
     min_lon: float = None,
     max_lon: float = None,
     parent_category: str = None,
+    status_filter: str = None,
 ) -> dict:
-    """Return a SearchResponse-compatible dict with results + pagination metadata."""
+    """Return a SearchResponse-compatible dict with results + pagination metadata.
+
+    status_filter: 'open' | 'closed' | 'unknown' | None
+      Filters on the pre-computed predicted_status column when set.
+    """
     limit = max(1, min(limit, 1000))
 
-    cache_key = (query, city, limit, offset, min_lat, max_lat, min_lon, max_lon, parent_category)
+    cache_key = (query, city, limit, offset, min_lat, max_lat, min_lon, max_lon,
+                 parent_category, status_filter)
     cached = _cache_get(cache_key)
     if cached is not None:
         return cached
@@ -684,6 +719,7 @@ def search_places(
             min_lon=min_lon,
             max_lon=max_lon,
             parent_category=parent_category,
+            status_filter=status_filter,
         )
     else:
         results, total_count, category_counts = _search_sqlite(

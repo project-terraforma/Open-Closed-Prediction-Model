@@ -27,25 +27,27 @@ WEIGHTS: dict[str, float] = {
     "closure_in_name":             0.65,
     "osm_disused_tag":             0.55,
     "no_contact_info":             0.18,
-    "very_low_data_confidence":    0.14,
-    "single_unverified_source":    0.10,
-    "high_turnover_category":      0.07,
-    "missing_address":             0.06,
-    "placeholder_name":            0.08,
+    "very_low_data_confidence":    0.12,
+    "single_unverified_source":    0.12,
+    "high_turnover_category":      0.09,
+    "missing_address":             0.05,
+    "placeholder_name":            0.07,
     # Open signals (negative — pull toward 0.0)
-    "website_confirmed_active":   -0.45,
-    "rich_data_profile":          -0.20,
+    # Reduced: a live website/rich profile doesn't prove a business is open
+    "website_confirmed_active":   -0.20,   # was -0.45
+    "rich_data_profile":          -0.10,   # was -0.20
     "high_data_confidence":       -0.15,
-    "multiple_sources_agree":     -0.18,
+    "multiple_sources_agree":     -0.08,   # was -0.18
     "two_sources":                -0.08,
     "national_chain":             -0.60,
     "has_brand_info":             -0.10,
     "recent_verification":        -0.25,
     # Amplifiers (applied after individual signals)
+    # Kept small so weak signals alone can't cross 0.5 threshold
     "dead_web_high_turnover":      0.15,
-    "no_contact_high_turnover":    0.12,
-    "low_conf_single_source":      0.12,
-    "extra_weak_signal":           0.08,
+    "no_contact_high_turnover":    0.06,   # was 0.12
+    "low_conf_single_source":      0.06,   # was 0.12
+    "extra_weak_signal":           0.04,   # was 0.08
     "active_web_multi_source":    -0.15,
 }
 
@@ -77,6 +79,17 @@ HIGH_TURNOVER_CATEGORIES: set[str] = {
     "ice_cream", "ice cream", "dessert", "bakery",
     "florist", "flowers",
     "antique", "antiques", "vintage",
+}
+
+# Categories that are never "closed" in the business sense — landmarks, public
+# infrastructure, institutions.  Sparse Overture data for these should not
+# trigger closure signals.
+NON_BUSINESS_CATEGORIES: set[str] = {
+    "bench", "viewpoint", "attraction", "place_of_worship", "church",
+    "mosque", "synagogue", "temple", "school", "university", "college",
+    "apartment", "residential", "parking", "park", "playground",
+    "museum", "library", "government", "post_office", "fire_station",
+    "police", "hospital", "clinic", "cemetery", "monument", "memorial",
 }
 
 CLOSURE_KEYWORDS: list[str] = [
@@ -271,6 +284,11 @@ class PlaceScorer:
             for name, direction, reason in self._defs
         }
 
+        # ── Non-business category guard ────────────────────────────────────────
+        # Landmarks, schools, places of worship, etc. are never "closed" due to
+        # sparse Overture data. Only fire hard explicit signals for them.
+        is_non_business = e["category"] in NON_BUSINESS_CATEGORIES
+
         # ── Evaluate closed signals ────────────────────────────────────────────
         if e["operating_status"] in ("closed", "inactive", "defunct"):
             signals["explicitly_marked_closed"].fired = True
@@ -284,25 +302,27 @@ class PlaceScorer:
         if e["osm_disused"]:
             signals["osm_disused_tag"].fired = True
 
-        if not e["has_website"] and not e["has_phone"] and not e["has_social"]:
-            signals["no_contact_info"].fired = True
+        # Weak signals — skip entirely for non-business categories
+        if not is_non_business:
+            if not e["has_website"] and not e["has_phone"] and not e["has_social"]:
+                signals["no_contact_info"].fired = True
 
-        if e["confidence"] is not None and e["confidence"] < 0.4:
-            signals["very_low_data_confidence"].fired = True
+            if e["confidence"] is not None and e["confidence"] < 0.4:
+                signals["very_low_data_confidence"].fired = True
 
-        if e["num_sources"] == 1 and (
-            e["confidence"] is None or e["confidence"] < 0.55
-        ):
-            signals["single_unverified_source"].fired = True
+            if e["num_sources"] == 1 and (
+                e["confidence"] is None or e["confidence"] < 0.55
+            ):
+                signals["single_unverified_source"].fired = True
 
-        if e["category"] in HIGH_TURNOVER_CATEGORIES:
-            signals["high_turnover_category"].fired = True
+            if e["category"] in HIGH_TURNOVER_CATEGORIES:
+                signals["high_turnover_category"].fired = True
 
-        if not e["has_address"]:
-            signals["missing_address"].fired = True
+            if not e["has_address"]:
+                signals["missing_address"].fired = True
 
-        if self._is_placeholder(e["name"]):
-            signals["placeholder_name"].fired = True
+            if self._is_placeholder(e["name"]):
+                signals["placeholder_name"].fired = True
 
         # ── Evaluate open signals ──────────────────────────────────────────────
         if e["website_status"] == "active":
