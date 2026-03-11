@@ -1,7 +1,7 @@
 """
-apply_predictions_v2.py — Apply the signal-based scorer to all 1.4M places.
+apply_predictions.py — Apply the signal-based scorer to all 1.4M places.
 
-Replaces apply_predictions.py (XGBoost).
+Replaces the previous XGBoost model approach.
 No ML model required — pure Python signal logic via scorer.py.
 
 Updates three columns on the places table:

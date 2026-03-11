@@ -30,6 +30,7 @@ project_c_raw.json
 # Backend Exclusions
 stillopen.db
 .env
+.env.*
 *.pbf
 
 # Frontend Exclusions
