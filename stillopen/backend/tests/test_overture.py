@@ -13,7 +13,7 @@ import pandas as pd
 # Add backend dir to path for internal imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from overture_ingest.ingest_places import process_overture_row
+from scripts.ingest_overture import process_overture_row
 from utils.canonical_metadata import build_canonical_metadata
 
 def test_build_canonical_from_overture_addresses():

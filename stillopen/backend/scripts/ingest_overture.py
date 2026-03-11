@@ -1,12 +1,12 @@
 """
-ingest_places.py — Ingest Overture Maps POI data using DuckDB and Pandas.
+ingest_overture.py — Ingest Overture Maps POI data using DuckDB and Pandas.
 
 This script queries Overture Maps GeoParquet files directly over HTTPS using DuckDB,
-processes and normalizes the data with Pandas, and upserts it into the PostGIS 
+processes and normalizes the data with Pandas, and upserts it into the PostGIS
 'places' table.
 
 Usage:
-    python overture_ingest/ingest_places.py [--release 2026-02-18.0] [--limit 1000]
+    python scripts/ingest_overture.py [--release 2026-02-18.0] [--limit 1000]
 
 Requirements:
     duckdb, pandas, pyarrow, sqlalchemy, psycopg2-binary

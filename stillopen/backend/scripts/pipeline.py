@@ -27,7 +27,7 @@ Options:
     --osm-table     point|polygon|both (default: both)
     --oa-dir        Directory containing OpenAddresses CSVs (default: data/openaddresses/)
     --oa-radius     Match radius in metres for OpenAddresses (default: 25)
-    --csv-dir       Directory containing generic CSV + JSON config pairs (default: data/csv/)
+    --csv-dir       Directory containing generic CSV + JSON config pairs (default: data/)
     --skip-enrich   Skip the post-ingestion enrichment pass
     --vacuum        Run VACUUM ANALYZE after the pipeline
 """
