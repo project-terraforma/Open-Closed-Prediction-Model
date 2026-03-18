@@ -1,0 +1,45 @@
+
+============== Correlation with Label (0=closed, 1=open) ==============
+
+Top negative correlations:
+has_end_date                 -1.000000
+end_date_days_ago            -0.795673
+has_location_end_date        -0.481973
+location_end_date_days_ago   -0.418102
+web_to_social_ratio          -0.282039
+has_email                    -0.213496
+license_id                   -0.152039
+match_confidence             -0.108288
+num_websites                 -0.100956
+has_website                  -0.100956
+Name: label, dtype: float64
+
+Top positive correlations:
+has_brand                  0.153322
+confidence_x_sources       0.160204
+digital_x_confidence       0.192913
+confidence                 0.200522
+has_social                 0.274598
+license_age_days           0.985054
+label                      1.000000
+category_match                  NaN
+has_closure_keyword             NaN
+website_verified_closed         NaN
+Name: label, dtype: float64
+
+============== Feature Importances (Gain) ==============
+end_date_days_ago              0.3991
+has_end_date                   0.3599
+license_age_days               0.1639
+digital_x_confidence           0.0771
+has_location_end_date          0.0000
+location_end_date_days_ago     0.0000
+name_match_score               0.0000
+address_match_score            0.0000
+category_match                 0.0000
+has_website                    0.0000
+num_websites                   0.0000
+has_social                     0.0000
+num_socials                    0.0000
+has_phone                      0.0000
+num_phones                     0.0000

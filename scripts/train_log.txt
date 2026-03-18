@@ -1,0 +1,126 @@
+
+StillOpen — train_xgboost.py
+  Input      : C:\Users\mpimm\UCSC HW\CRWN102\Open-Closed-Prediction-Model-Emilio-Michael\scripts\data\training_set.csv
+  Output dir : C:\Users\mpimm\UCSC HW\CRWN102\Open-Closed-Prediction-Model-Emilio-Michael\scripts\models
+  Optuna trials: 50
+
+============================================================
+DATA SUMMARY
+============================================================
+  Total rows  : 103
+  Open  (1)   : 68 (66.0%)
+  Closed (0)  : 35 (34.0%)
+
+  Feature columns (28):
+    name_match_score
+    address_match_score
+    category_match
+    has_website
+    num_websites
+    has_social
+    num_socials
+    has_phone
+    num_phones
+    has_email
+    has_brand
+    has_address
+    confidence
+    num_sources
+    source_mean_confidence
+    days_since_last_update
+    name_length
+    has_closure_keyword
+    high_turnover_category
+    digital_presence
+    metadata_completeness
+    confidence_x_sources
+    digital_x_confidence
+    sources_x_recency
+    web_to_social_ratio
+    phone_to_web_ratio
+    is_stale
+    website_verified_closed
+
+  Train size  : 82
+  Test size   : 21
+  scale_pos_weight (open/closed): 1.9429
+
+============================================================
+OPTUNA HYPERPARAMETER TUNING (50 trials)
+============================================================
+  Optimising: F1 on closed class (recall matters more than precision)
+
+  Best trial F1 (closed): 0.7143
+  Best params:
+    n_estimators: 289
+    max_depth: 5
+    learning_rate: 0.12713159007345365
+    subsample: 0.9065285084916148
+    colsample_bytree: 0.640833902938246
+    min_child_weight: 2
+    gamma: 1.7066068601121953
+    reg_alpha: 0.23019491617068044
+    reg_lambda: 4.43434935183009
+    scale_pos_weight: 1.9429
+    eval_metric: logloss
+    random_state: 42
+    n_jobs: -1
+    verbosity: 0
+
+============================================================
+TRAINING FINAL MODEL ON FULL TRAIN SPLIT
+============================================================
+
+  Optimal threshold (test): 0.62  (closed-F1=0.6667)
+
+  Classification report on held-out test set (threshold=0.62):
+              precision    recall  f1-score   support
+
+      CLOSED     0.6250    0.7143    0.6667         7
+        OPEN     0.8462    0.7857    0.8148        14
+
+    accuracy                         0.7619        21
+   macro avg     0.7356    0.7500    0.7407        21
+weighted avg     0.7724    0.7619    0.7654        21
+
+  Feature importances (gain), top 20:
+    source_mean_confidence                   0.1291  #####
+    has_phone                                0.1135  ####
+    digital_presence                         0.1126  ####
+    web_to_social_ratio                      0.0937  ###
+    name_length                              0.0857  ###
+    num_phones                               0.0799  ###
+    confidence                               0.0786  ###
+    digital_x_confidence                     0.0682  ##
+    confidence_x_sources                     0.0663  ##
+    name_match_score                         0.0642  ##
+    address_match_score                      0.0613  ##
+    has_email                                0.0469  #
+    has_address                              0.0000  
+    has_brand                                0.0000  
+    has_social                               0.0000  
+    num_socials                              0.0000  
+    num_websites                             0.0000  
+    has_website                              0.0000  
+    category_match                           0.0000  
+    days_since_last_update                   0.0000  
+
+============================================================
+5-FOLD CROSS-VALIDATION (on full dataset)
+============================================================
+  Fold 1: closed-F1=0.5000
+  Fold 2: closed-F1=0.3636
+  Fold 3: closed-F1=0.7143
+  Fold 4: closed-F1=0.7692
+  Fold 5: closed-F1=0.3333
+
+  Mean closed-F1: 0.5361 (+/-0.1779)
+
+============================================================
+MODEL SAVED
+============================================================
+  Model      : C:\Users\mpimm\UCSC HW\CRWN102\Open-Closed-Prediction-Model-Emilio-Michael\scripts\models\xgboost_licensed.pkl  (0.2 MB)
+  Features   : C:\Users\mpimm\UCSC HW\CRWN102\Open-Closed-Prediction-Model-Emilio-Michael\scripts\models\feature_columns.json
+  Threshold  : 0.62
+  Train rows : 82
+============================================================

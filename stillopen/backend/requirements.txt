@@ -15,3 +15,11 @@ python-dotenv
 duckdb
 pandas
 pyarrow
+
+# Prediction model training (build_training_set.py, train_xgboost.py)
+xgboost
+optuna
+rapidfuzz
+tqdm
+geopy
+requests

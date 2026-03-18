@@ -4,7 +4,7 @@ import { Search, Loader2, MapPin, Building2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
 import { searchPlaces } from "../lib/api";
-import { fudgeConfidence } from "../lib/formatters";
+import { fudgeConfidence, displayConfidence } from "../lib/formatters";
 import StatusBadge from "./StatusBadge";
 
 import type { SearchResultType } from "./SearchResults";
@@ -296,7 +296,7 @@ export default function SearchBar({ compact = false }: { compact?: boolean }) {
                                                         <StatusBadge status={result.status} />
                                                         {(result.status === 'open' || result.status === 'closed') && (
                                                             <span className="text-[10px] text-gray-400 dark:text-gray-500 mt-1 uppercase tracking-wider font-semibold">
-                                                                Conf: {((result.confidence ?? 0) * 100).toFixed(0)}%
+                                                                Conf: {displayConfidence(result.confidence) ?? "—"}%
                                                             </span>
                                                         )}
                                                     </div>

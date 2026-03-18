@@ -3,7 +3,7 @@ import { useEffect, useState, useMemo, useRef, useCallback, Suspense } from "rea
 import { useRouter, usePathname } from "next/navigation";
 import { searchPlaces } from "../lib/api";
 import type { SearchResultType } from "../lib/api";
-import { formatTag, fudgeConfidence } from "../lib/formatters";
+import { formatTag, fudgeConfidence, displayConfidence } from "../lib/formatters";
 import StatusBadge from "./StatusBadge";
 import PaginationBar from "./PaginationBar";
 import Link from "next/link";
@@ -489,19 +489,22 @@ function SearchResultsContent({
                                                 <p className="mt-3 text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500">
                                                     Insufficient data
                                                 </p>
-                                            ) : res.confidence != null && (res.status === "open" || res.status === "closed") && (
+                                            ) : res.confidence != null && (res.status === "open" || res.status === "closed") && (() => {
+                                                const confPct = displayConfidence(res.confidence);
+                                                return confPct != null ? (
                                                 <div className="mt-3 flex items-center gap-2">
                                                     <div className="flex-1 h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
                                                         <div
-                                                            className={`h-full rounded-full transition-all ${res.confidence > 0.75 ? "bg-emerald-500" : res.confidence >= 0.5 ? "bg-amber-400" : "bg-rose-400"}`}
-                                                            style={{ width: `${(res.confidence * 100).toFixed(0)}%` }}
+                                                            className="h-full rounded-full transition-all bg-emerald-500"
+                                                            style={{ width: `${confPct}%` }}
                                                         />
                                                     </div>
                                                     <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500 shrink-0">
-                                                        {(res.confidence * 100).toFixed(0)}%
+                                                        {confPct}%
                                                     </span>
                                                 </div>
-                                            )}
+                                                ) : null;
+                                            })()}
                                         </div>
                                     </div>
                                 </Link>

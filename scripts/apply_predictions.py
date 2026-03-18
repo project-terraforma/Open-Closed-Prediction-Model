@@ -1,25 +1,31 @@
 """
-apply_predictions.py — Apply the signal-based scorer to all 1.4M places.
+apply_predictions.py — Apply predictions to all 1.4M places.
 
-Replaces the previous XGBoost model approach.
-No ML model required — pure Python signal logic via scorer.py.
+Mode selection (automatic):
+  1. If scripts/models/xgboost_licensed.pkl + feature_columns.json exist,
+     use the XGBoost model trained on real business license ground truth data.
+  2. Otherwise fall back to the pure-signal scorer (scorer.py).
 
 Updates three columns on the places table:
   predicted_status       VARCHAR(20)  — 'open' | 'closed'
   prediction_confidence  FLOAT        — 50-99 (percentage)
   prediction_updated_at  TIMESTAMP    — when the prediction was last written
 
-Usage:
-    python scripts/apply_predictions_v2.py [--batch-size N] [--offset N] [--local] [--db-url URL]
+Usage (Windows — set PYTHONIOENCODING=utf-8 to avoid cp1252 errors):
+    set PYTHONIOENCODING=utf-8
+    python scripts/apply_predictions.py [--batch-size N] [--offset N] [--local] [--db-url URL]
+
+    --scorer-only   Force use of signal-based scorer even if model files exist
 
 After completion prints:
+  - Mode used (XGBoost licensed model / signal scorer)
   - Total open vs closed counts and percentages
   - Average confidence for open and closed predictions
-  - Which signals fired most frequently (top 10)
+  - Which signals fired most frequently (top 10, scorer mode only)
   - Top 10 categories with highest closed prediction rate
   - Chain verification (no known chains predicted closed)
-  - 30 sample closed predictions with fired signals
-  - Spot check pass/fail results
+  - 30 sample closed predictions
+  - Spot check pass/fail results (scorer mode only)
 """
 
 import json
@@ -29,11 +35,219 @@ import argparse
 from collections import defaultdict
 from datetime import datetime
 
+import numpy as np
+import pandas as pd
+
 # ── Path setup ────────────────────────────────────────────────────────────────
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
 from stillopen.backend.app.scorer import PlaceScorer, KNOWN_CHAINS
+
+# ── XGBoost model paths ───────────────────────────────────────────────────────
+MODELS_DIR = os.path.join(PROJECT_ROOT, "scripts", "models")
+MODEL_PKL = os.path.join(MODELS_DIR, "xgboost_licensed.pkl")
+FEATURE_JSON = os.path.join(MODELS_DIR, "feature_columns.json")
+
+HIGH_TURNOVER_CATEGORIES = {
+    "restaurant", "cafe", "bar", "pub", "fast_food", "fast food", "food_court",
+    "clothes", "clothing", "shoes", "boutique", "fashion",
+    "beauty", "beauty salon", "hair salon", "hairdresser", "nail_salon", "nail salon",
+    "dry_cleaning", "dry cleaning", "laundry",
+    "gift", "gift shop", "souvenir", "toy", "toys",
+    "furniture", "home_goods", "home goods", "interior_decoration",
+    "video_games", "video games", "bookstore", "books",
+    "department_store", "department store",
+    "ice_cream", "ice cream", "dessert", "bakery",
+    "florist", "flowers", "art_gallery", "art gallery",
+    "antique", "antiques", "vintage",
+}
+
+CLOSURE_KEYWORDS = [
+    "closed", "former", "defunct", "out of business", "coming soon",
+    "vacant", "empty", "available", "for lease", "for rent",
+]
+
+
+def _has(x) -> int:
+    if x is None:
+        return 0
+    if isinstance(x, (list, tuple)):
+        return 1 if len(x) > 0 else 0
+    if isinstance(x, dict):
+        return 1 if len(x) > 0 else 0
+    s = str(x).strip()
+    return 0 if s.lower() in ("none", "null", "nan", "", "[]", "{}") else 1
+
+
+def _count(x) -> int:
+    return len(x) if isinstance(x, (list, tuple)) else 0
+
+
+def extract_model_features(row: dict, meta: dict) -> dict:
+    """
+    Extract the same features used by build_training_set.py / train_xgboost.py.
+    License-derived features (has_end_date, etc.) are set to 0/-1 since the DB
+    does not have license data — the model was trained to handle this.
+    """
+    websites = meta.get("websites") or []
+    phones = meta.get("phones") or []
+    socials = meta.get("socials") or []
+    emails = meta.get("emails") or []
+    brand = meta.get("brand") or {}
+    sources = meta.get("sources") or []
+
+    has_website = _has(websites)
+    has_phone = _has(phones)
+    has_social = _has(socials)
+    has_email = _has(emails)
+    has_brand = _has(brand)
+    has_address = _has(row.get("address"))
+    num_websites = _count(websites)
+    num_phones = _count(phones)
+    num_socials = _count(socials)
+
+    num_sources = len(sources) if isinstance(sources, list) else 0
+    confs, min_days = [], 9999
+    for s in (sources if isinstance(sources, list) else []):
+        if isinstance(s, dict):
+            try:
+                confs.append(float(s["confidence"]))
+            except (KeyError, TypeError, ValueError):
+                pass
+            if s.get("update_time"):
+                try:
+                    ts = pd.to_datetime(str(s["update_time"]), utc=True)
+                    d = (datetime.now(ts.tzinfo) - ts).days
+                    min_days = min(min_days, max(0, d))
+                except Exception:
+                    pass
+    source_mean_confidence = float(sum(confs) / len(confs)) if confs else 0.0
+    days_since_last_update = min_days if min_days != 9999 else 365
+
+    confidence = float(meta.get("confidence") or 0)
+    name = str(row.get("name") or "")
+    category = str(row.get("category") or "").lower()
+
+    name_length = len(name)
+    has_closure_keyword = 1 if any(kw in name.lower() for kw in CLOSURE_KEYWORDS) else 0
+    high_turnover = 1 if category in HIGH_TURNOVER_CATEGORIES else 0
+
+    digital_presence = has_website + has_social + has_phone + has_email + has_brand
+    metadata_completeness = (
+        has_website * 0.2 + has_social * 0.15 + has_phone * 0.2 +
+        has_email * 0.1 + has_brand * 0.15 + has_address * 0.1 +
+        (1 if num_sources > 1 else 0) * 0.1
+    )
+    confidence_x_sources = confidence * num_sources
+    digital_x_confidence = digital_presence * confidence
+    sources_x_recency = num_sources / max(1, days_since_last_update + 1)
+    web_to_social_ratio = num_websites / (num_socials + 1)
+    phone_to_web_ratio = num_phones / (num_websites + 1)
+    is_stale = 1 if days_since_last_update > 180 else 0
+    website_verified_closed = 1 if meta.get("website_status") == "likely_closed" else 0
+
+    return {
+        # License features — 0/-1 when called from apply_predictions (no license data)
+        "has_end_date": 0,
+        "has_location_end_date": 0,
+        "end_date_days_ago": -1,
+        "location_end_date_days_ago": -1,
+        "license_age_days": -1,
+        "name_match_score": 0,
+        "address_match_score": 0,
+        "category_match": 0,
+        # Overture/OSM features
+        "has_website": has_website,
+        "num_websites": num_websites,
+        "has_social": has_social,
+        "num_socials": num_socials,
+        "has_phone": has_phone,
+        "num_phones": num_phones,
+        "has_email": has_email,
+        "has_brand": has_brand,
+        "has_address": has_address,
+        "confidence": confidence,
+        "num_sources": num_sources,
+        "source_mean_confidence": source_mean_confidence,
+        "days_since_last_update": days_since_last_update,
+        "name_length": name_length,
+        "has_closure_keyword": has_closure_keyword,
+        "high_turnover_category": high_turnover,
+        "digital_presence": digital_presence,
+        "metadata_completeness": metadata_completeness,
+        "confidence_x_sources": confidence_x_sources,
+        "digital_x_confidence": digital_x_confidence,
+        "sources_x_recency": sources_x_recency,
+        "web_to_social_ratio": web_to_social_ratio,
+        "phone_to_web_ratio": phone_to_web_ratio,
+        "is_stale": is_stale,
+        "website_verified_closed": website_verified_closed,
+    }
+
+
+def load_xgboost_model():
+    """Load the licensed XGBoost model if files exist. Returns (model_bundle, feature_cols) or (None, None)."""
+    if not (os.path.exists(MODEL_PKL) and os.path.exists(FEATURE_JSON)):
+        return None, None
+    try:
+        import joblib
+        bundle = joblib.load(MODEL_PKL)
+        with open(FEATURE_JSON, encoding="utf-8") as f:
+            feature_cols = json.load(f)
+        return bundle, feature_cols
+    except Exception as e:
+        print(f"  WARN: Could not load XGBoost model: {e}")
+        return None, None
+
+
+def predict_batch_xgboost(batch_rows: list, model_bundle: dict, feature_cols: list) -> list:
+    """
+    Run XGBoost predictions on a batch.
+    Returns list of (status, confidence) tuples matching order of batch_rows.
+    """
+    clf = model_bundle["model"]
+    threshold = model_bundle.get("optimal_threshold", 0.5)
+
+    records = []
+    for row in batch_rows:
+        meta = row.get("metadata_json") or {}
+        if not isinstance(meta, dict):
+            try:
+                meta = json.loads(meta)
+            except Exception:
+                meta = {}
+        feats = extract_model_features(row, meta)
+        records.append(feats)
+
+    df = pd.DataFrame(records)
+
+    # Handle category encoding if the model was trained with it
+    cat_freq = model_bundle.get("category_freq", {})
+    if "category_freq_score" in feature_cols and "category_freq_score" not in df.columns:
+        df["category_freq_score"] = 0.0
+    le = model_bundle.get("label_encoder")
+    if "category_label" in feature_cols and "category_label" not in df.columns:
+        df["category_label"] = 0
+
+    # Align columns to exactly what was trained on
+    for col in feature_cols:
+        if col not in df.columns:
+            df[col] = 0
+    X = df[feature_cols].fillna(0).astype(float)
+
+    y_prob = clf.predict_proba(X)[:, 1]  # prob of open (label=1)
+
+    results = []
+    for prob in y_prob:
+        is_open = prob >= threshold
+        status = "open" if is_open else "closed"
+        # Map probability distance from threshold to 50–99 confidence range
+        dist = abs(prob - threshold) / max(threshold, 1 - threshold)
+        confidence = float(round(min(99.0, max(50.0, 50.0 + dist * 49.0))))
+        results.append((status, confidence))
+
+    return results
 
 
 def build_place_dict(row: dict) -> dict:
@@ -68,6 +282,8 @@ def main():
                         help="Use local Postgres (postgres:postgres123@localhost:5432/stillopen)")
     parser.add_argument("--db-url", type=str, default=None,
                         help="Override DATABASE_URL entirely")
+    parser.add_argument("--scorer-only", action="store_true",
+                        help="Force signal-based scorer even if model files exist")
     args = parser.parse_args()
 
     # ── DB connection ─────────────────────────────────────────────────────────
@@ -85,7 +301,29 @@ def main():
         db_url = os.environ.get("DATABASE_URL", "postgresql://localhost:5432/stillopen")
     db_url = db_url.replace("postgresql+psycopg2://", "postgresql://")
 
-    print(f"StillOpen — Signal-Based Batch Predictor v2")
+    # ── Model or scorer selection ──────────────────────────────────────────────
+    use_xgboost = False
+    model_bundle = None
+    feature_cols = None
+
+    if not args.scorer_only:
+        model_bundle, feature_cols = load_xgboost_model()
+        if model_bundle is not None:
+            use_xgboost = True
+
+    if use_xgboost:
+        print(f"StillOpen — XGBoost Licensed Model Batch Predictor")
+        print(f"  Model     : {MODEL_PKL}")
+        print(f"  Threshold : {model_bundle.get('optimal_threshold', 0.5):.2f}")
+        print(f"  Trained at: {model_bundle.get('trained_at', 'unknown')}")
+        print(f"  Features  : {len(feature_cols)}")
+    else:
+        print(f"StillOpen — Signal-Based Batch Predictor v2")
+        if args.scorer_only:
+            print(f"  (--scorer-only flag set, skipping XGBoost model)")
+        else:
+            print(f"  (No XGBoost model found at {MODEL_PKL}, using scorer)")
+
     print(f"  DB: {db_url.split('@')[-1] if '@' in db_url else db_url}")
 
     conn = psycopg2.connect(db_url)
@@ -134,25 +372,42 @@ def main():
             break
 
         updates = []
-        for row in batch_rows:
-            place = build_place_dict(row)
-            result = scorer.score(place)
 
-            cat = (row.get("category") or "unknown").lower()
-            category_totals[cat] += 1
+        if use_xgboost:
+            # ── XGBoost batch prediction ───────────────────────────────────
+            preds = predict_batch_xgboost(batch_rows, model_bundle, feature_cols)
+            for row, (status, confidence) in zip(batch_rows, preds):
+                cat = (row.get("category") or "unknown").lower()
+                category_totals[cat] += 1
+                if status == "closed":
+                    n_closed += 1
+                    closed_conf_sum += confidence
+                    category_closed[cat] += 1
+                else:
+                    n_open += 1
+                    open_conf_sum += confidence
+                updates.append((status, confidence, now_ts, row["place_id"]))
+        else:
+            # ── Signal-based scorer ────────────────────────────────────────
+            for row in batch_rows:
+                place = build_place_dict(row)
+                result = scorer.score(place)
 
-            if result.status == "closed":
-                n_closed += 1
-                closed_conf_sum += result.confidence
-                category_closed[cat] += 1
-            else:
-                n_open += 1
-                open_conf_sum += result.confidence
+                cat = (row.get("category") or "unknown").lower()
+                category_totals[cat] += 1
 
-            for sig in result.fired_signals:
-                signal_counts[sig.name] += 1
+                if result.status == "closed":
+                    n_closed += 1
+                    closed_conf_sum += result.confidence
+                    category_closed[cat] += 1
+                else:
+                    n_open += 1
+                    open_conf_sum += result.confidence
 
-            updates.append((result.status, result.confidence, now_ts, row["place_id"]))
+                for sig in result.fired_signals:
+                    signal_counts[sig.name] += 1
+
+                updates.append((result.status, result.confidence, now_ts, row["place_id"]))
 
         with conn.cursor() as cur:
             psycopg2.extras.execute_batch(
@@ -195,12 +450,17 @@ def main():
     print(f"\n  Avg confidence (open)  : {avg_open_conf:.1f}%")
     print(f"  Avg confidence (closed): {avg_closed_conf:.1f}%")
 
-    # Top 10 signals
-    print(f"\n  Top 10 signals fired:")
-    sorted_signals = sorted(signal_counts.items(), key=lambda x: x[1], reverse=True)[:10]
-    for name, count in sorted_signals:
-        pct = count / max(1, processed) * 100
-        print(f"    {name:<35s} {count:>10,}  ({pct:.1f}%)")
+    # Mode label
+    mode_label = "XGBoost Licensed Model" if use_xgboost else "Signal-Based Scorer"
+    print(f"\n  Prediction mode  : {mode_label}")
+
+    # Top 10 signals (scorer mode only)
+    if not use_xgboost and signal_counts:
+        print(f"\n  Top 10 signals fired:")
+        sorted_signals = sorted(signal_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+        for name, count in sorted_signals:
+            pct = count / max(1, processed) * 100
+            print(f"    {name:<35s} {count:>10,}  ({pct:.1f}%)")
 
     # Top 10 categories by closed rate
     print(f"\n  Top 10 categories by CLOSED prediction rate:")
@@ -279,25 +539,34 @@ def main():
         ov_conf  = row["overture_conf"] or 0.0
         ws       = row["website_status"] or "unchecked"
 
-        # Re-score to get signal names
+        print(f"\n  [{i:2d}] {name[:50]}")
+        print(f"       Category   : {cat}")
+        print(f"       City       : {city}")
+        print(f"       Confidence : {conf:.0f}%  |  Overture conf: {ov_conf:.2f}")
+        print(f"       Website    : {ws}")
+
+        # Re-score with scorer to show fired signals (informational in both modes)
         place = {
             "name": name,
             "category": row["category"] or "",
             "website_status": ws,
             "confidence": ov_conf,
         }
-        result = scorer.score(place)
-        signal_names = ", ".join(s.name for s in result.fired_signals)
-
-        print(f"\n  [{i:2d}] {name[:50]}")
-        print(f"       Category   : {cat}")
-        print(f"       City       : {city}")
-        print(f"       Confidence : {conf:.0f}%  |  Overture conf: {ov_conf:.2f}")
+        rescore = scorer.score(place)
+        signal_names = ", ".join(s.name for s in rescore.fired_signals) or "(none)"
         print(f"       Signals    : {signal_names}")
 
     conn2.close()
 
-    # ── Correctness spot checks ───────────────────────────────────────────────
+    # ── Correctness spot checks (scorer mode only) ───────────────────────────
+    if use_xgboost:
+        print(f"\n{sep}")
+        print("CORRECTNESS SPOT CHECKS — skipped (XGBoost model mode)")
+        print(sep)
+        print("\nDone. Predictions stored in predicted_status, prediction_confidence,")
+        print("prediction_updated_at. (XGBoost Licensed Model)")
+        return
+
     print(f"\n{sep}")
     print("CORRECTNESS SPOT CHECKS")
     print(sep)

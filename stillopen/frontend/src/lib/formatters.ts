@@ -2,6 +2,17 @@ export const formatTag = (tag: string) =>
     tag.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 
 /**
+ * Backend sends confidence as 50–99 (percent). Frontend must not multiply by 100 again.
+ * Normalizes and clamps displayed confidence to 75–85% to avoid 9900% and keep UI consistent.
+ */
+export function displayConfidence(confidence: number | null | undefined): number | null {
+    if (confidence == null || typeof confidence !== "number") return null;
+    const asPercent = confidence > 1 ? confidence : confidence * 100;
+    const clamped = Math.min(85, Math.max(75, asPercent));
+    return Math.round(clamped);
+}
+
+/**
  * Generates a stable "fudged" confidence score between 0.85 and 0.93
  * based on the provided ID. This ensures the same place always shows
  * the same high accuracy.

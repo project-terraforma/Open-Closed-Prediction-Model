@@ -1,0 +1,10 @@
+Check                               | Result | Reason
+------------------------------------------------------------------------------------------------------------------------
+Class Balance                       | Flag   | Open: 66.0%, Closed: 34.0%
+Perf: Open (1)                      | Pass   | Acc: 0.835, P: 0.918, R: 0.824, F1: 0.868
+Perf: Closed (0)                    | Pass   | Acc: 0.835, P: 0.714, R: 0.857, F1: 0.779
+Spurious: name_length diff          | Pass   | Open mean: 20.5, Closed mean: 20.2 (Diff: 1.5%)
+Spurious: name_length shuffle       | Pass   | Accuracy drop: 9.71% (Threshold: 2%)
+Spurious: geo shuffle               | N/A    | No standard geo features found
+Geo bias                            | N/A    | No ZIP or region feature found. Checked columns: ['has_end_date', 'has_location_end_date', 'end_date_days_ago', 'location_end_date_days_ago', 'license_age_days', 'name_match_score', 'address_match_score', 'category_match', 'has_website', 'num_websites', 'has_social', 'num_socials', 'has_phone', 'num_phones', 'has_email', 'has_brand', 'has_address', 'confidence', 'num_sources', 'source_mean_confidence', 'days_since_last_update', 'name_length', 'has_closure_keyword', 'high_turnover_category', 'digital_presence', 'metadata_completeness', 'confidence_x_sources', 'digital_x_confidence', 'sources_x_recency', 'web_to_social_ratio', 'phone_to_web_ratio', 'is_stale', 'website_verified_closed', 'label', 'license_id', 'license_source', 'license_name', 'license_address', 'db_place_id', 'db_name', 'db_address', 'match_confidence']
+Confidence dist                     | Pass   | 6.8% predictions in 0.45-0.55 range

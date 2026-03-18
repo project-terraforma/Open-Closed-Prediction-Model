@@ -6,7 +6,7 @@ import {
     Wifi, Truck, ShoppingBag, Car, Utensils, Accessibility,
     TreePine, Layers,
 } from "lucide-react";
-import { formatTag } from "../lib/formatters";
+import { formatTag, displayConfidence } from "../lib/formatters";
 import StatusBadge from "./StatusBadge";
 
 export interface PlaceDetail {
@@ -56,7 +56,7 @@ function isPositive(val?: string): boolean {
 
 export default function ResultCard({ data }: ResultProps) {
     const hasConfidence = data.confidence != null && data.prediction_type !== "likely_open";
-    const conf = hasConfidence ? Math.round((data.confidence ?? 0) * 100) : null;
+    const conf = hasConfidence ? displayConfidence(data.confidence) : null;
     const isOpen   = data.status?.toLowerCase() === "open";
     const isClosed = data.status?.toLowerCase() === "closed";
     const accentColor = isOpen ? "#10b981" : isClosed ? "#f43f5e" : "#6b7280";
